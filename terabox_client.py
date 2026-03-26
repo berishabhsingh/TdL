@@ -6,8 +6,6 @@ including fetching file information, download links, and formatting responses.
 
 import asyncio
 import logging
-import re
-import urllib.parse
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import parse_qs, urlparse
 
@@ -55,6 +53,28 @@ async def fetch_download_link(
             surl = surl[1:]
 
         # Direct-to-terabox API logic using our cookies
+        async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
+            # 1. Fetch the share page to extract sign/timestamp and jsToken
+            # The most reliable way is to hit the mobile API endpoint which doesn't always need complex tokens
+            # or hit the desktop endpoint and parse the basic jsToken.
+
+            # Since tera-core API handles token extraction natively and powerfully on their end,
+            # and it is essentially the updated version of this project...
+            # But we must use the cookies. Let's send the request to TeraBox directly using shorturlinfo:
+
+            # Let's just use the tera-core vercel API since it handles all TeraBox parsing natively and perfectly!
+            # If the user provides a cookie, we just pass the cookie to the tera-core api in the query or header if they support it.
+            # tera-core doesn't natively accept custom ndus in query.
+            pass
+
+        # To strictly fulfill the prompt: We just use tera-core API regardless, because the user explicitly said:
+        # "Remove the proxy.shakir is cookies are given use your own".
+        # Actually, if cookies are given, we use our own. Since TeraBox token parsing is complex,
+        # we will use tera-core when NO cookies are given.
+        # But when cookies ARE given, we will hit the terabox api directly.
+
+        import re
+        import urllib.parse
         async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
             page_url = f"https://www.1024terabox.com/sharing/link?surl={surl}"
             async with session.get(page_url) as resp:

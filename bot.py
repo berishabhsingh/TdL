@@ -11,8 +11,9 @@ from pyrogram.types import Message
 from dotenv import load_dotenv
 
 import time
+from terabox_client import fetch_direct_links
+from config import load_cookies, headers
 
-from flowapi import get_flowvideo_links
 from hachoir.parser import createParser
 from hachoir.metadata import extractMetadata
 
@@ -31,7 +32,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = os.getenv("BOT_API_ID")
 API_HASH = os.getenv("BOT_API_HASH")
 DUMP_CHANNEL_ID = os.getenv("DUMP_CHANNEL_ID")
-API_URL = os.getenv("API_URL", "https://td-l.vercel.app/api2")
 
 if DUMP_CHANNEL_ID:
     try:
@@ -56,32 +56,16 @@ def format_bytes(size):
         n += 1
     return f"{size:.2f} {power_labels[n]}B"
 
-import subprocess
-
 def get_video_duration(filepath):
     try:
-        # First try using ffprobe (requires ffmpeg installed on host)
-        result = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries",
-             "format=duration", "-of",
-             "default=noprint_wrappers=1:nokey=1", filepath],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT
-        )
-        duration = float(result.stdout)
-        return int(duration)
-    except Exception as ffmpeg_err:
-        logger.warning(f"ffprobe failed for {filepath}: {ffmpeg_err}, falling back to hachoir")
-        # Fallback to hachoir
-        try:
-            parser = createParser(filepath)
-            if not parser:
-                return 0
-            metadata = extractMetadata(parser)
-            if metadata and metadata.has("duration"):
-                return metadata.get("duration").seconds
-        except Exception as e:
-            logger.warning(f"Failed to extract video duration for {filepath} with hachoir: {e}")
+        parser = createParser(filepath)
+        if not parser:
+            return 0
+        metadata = extractMetadata(parser)
+        if metadata and metadata.has("duration"):
+            return metadata.get("duration").seconds
+    except Exception as e:
+        logger.warning(f"Failed to extract video duration for {filepath}: {e}")
     return 0
 
 def format_time(seconds):
@@ -160,33 +144,26 @@ async def handle_link(client: Client, message: Message):
 
     async with semaphore:
         try:
-            # 1. Fetch direct links via external API (using flowapi.py)
-            links = None
-            try:
-                # Offload synchronous requests to a separate thread to not block event loop
-                data = await asyncio.to_thread(get_flowvideo_links, url)
-
-                if isinstance(data, dict) and data.get("error"):
-                    links = {"error": data.get("error", "Unknown API error")}
-                elif "data" in data:
-                    # Map flowvideoplayer output structure to bot expected structure
-                    links = [
-                        {
-                            "filename": item.get("file_name", "Unknown"),
-                            "size": item.get("file_size", "Unknown"),
-                            "direct_link": item.get("download_url") or item.get("stream_final_url"),
-                            "thumbnail": item.get("thumbnail")
-                        }
-                        for item in data["data"]
-                    ]
-                else:
-                    links = {"error": "Invalid API response format"}
-            except Exception as e:
-                links = {"error": f"Failed to fetch data: {e}"}
+            # 1. Fetch direct links
+            links = await fetch_direct_links(url, password)
 
             if isinstance(links, dict) and "error" in links:
                 error_msg = links.get('error')
-                await status_msg.edit_text(f"❌ <b>Error:</b> {error_msg}", parse_mode=ParseMode.HTML)
+                if "403" in str(error_msg):
+                    await status_msg.edit_text(
+                        "❌ <b>Error: 403 Forbidden</b>\n"
+                        "The public TeraBox gateway is currently rate-limited or blocked.\n\n"
+                        "<i>To fix this permanently, the bot owner must configure their own <code>COOKIE_JSON</code> in the .env file.</i>",
+                        parse_mode=ParseMode.HTML
+                    )
+                elif "Empty share list" in str(error_msg) or "deleted" in str(error_msg):
+                    await status_msg.edit_text(
+                        "❌ <b>Link is Empty or Invalid</b>\n"
+                        "The TeraBox link contains no files, has been deleted, or requires a different account cookie.",
+                        parse_mode=ParseMode.HTML
+                    )
+                else:
+                    await status_msg.edit_text(f"❌ <b>Error:</b> {error_msg}", parse_mode=ParseMode.HTML)
                 return
 
             if not links:
@@ -195,7 +172,7 @@ async def handle_link(client: Client, message: Message):
 
             # 2. Process each file
             for file_info in links:
-                direct_link = (file_info.get("direct_link") or file_info.get("download_link") or file_info.get("link") or "")
+                direct_link = file_info.get("direct_link") or ""
                 direct_link = direct_link.strip()
                 if not direct_link:
                     await message.reply_text(
@@ -221,19 +198,17 @@ async def handle_link(client: Client, message: Message):
                 temp_thumb = f"thumb_{message.id}.jpg"
 
                 try:
-                    download_headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-                        "Accept": "*/*",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Connection": "keep-alive",
-                    }
+                    # We must pass the cookies and proper headers to the download server
+                    # otherwise the CDN will return 403 Forbidden
+                    download_cookies = load_cookies()
+                    download_headers = headers.copy()
 
-                    # No cookies are passed, TeraBox direct links usually work without them for the specific short-lived token
-                    async with aiohttp.ClientSession() as session:
+                    # Sometimes the backend redirects the download URL, so let's allow redirects
+                    async with aiohttp.ClientSession(cookies=download_cookies) as session:
                         # Download main file
                         async with session.get(direct_link, headers=download_headers, allow_redirects=True) as resp:
                             if resp.status != 200:
-                                await status_msg.edit_text(f"❌ Failed to download {filename} (Status: {resp.status})\nMake sure your API server's cookies are valid.")
+                                await status_msg.edit_text(f"❌ Failed to download {filename} (Status: {resp.status})\nTry checking if your `COOKIE_JSON` is valid.")
                                 continue
 
 
@@ -245,7 +220,7 @@ async def handle_link(client: Client, message: Message):
 
                             async with aiofiles.open(temp_file, "wb") as f:
                                 while True:
-                                    chunk = await resp.content.read(1024 * 1024) # 1MB chunk size
+                                    chunk = await resp.content.read(8192)
                                     if not chunk:
                                         break
                                     await f.write(chunk)

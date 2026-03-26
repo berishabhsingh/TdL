@@ -18,131 +18,131 @@ from utils import find_between, extract_thumbnail_dimensions, get_formatted_size
 async def fetch_download_link(
     url: str, password: str = ""
 ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-    """Fetch file information from TeraBox share link using unified proxy API.
-
-    This function uses the unified Cloudflare Worker proxy with mode=resolve,
-    which automatically handles jsToken extraction and API calls in a single request.
-
-    Args:
-        url: TeraBox share URL
-        password: Optional password for protected links
-
-    Returns:
-        Union[List[Dict[str, Any]], Dict[str, Any]]: List of files or error dict
-    """
+    """Fetch file information from TeraBox share link directly using TeraBox API."""
     try:
-        from config import PROXY_BASE_URL, PROXY_MODE_RESOLVE
-
         cookies = load_cookies()
 
-        if not cookies:
-            logging.error("No cookies found. You MUST specify a valid COOKIE_JSON in .env for this bot to function.")
-            return {"error": "Authentication cookies missing. Please set COOKIE_JSON in .env.", "errno": -1}
-        # Extract surl from URL
-        parsed_url = urlparse(url)
-        if "surl=" in parsed_url.query:
-            surl = parse_qs(parsed_url.query)["surl"][0]
-        elif "/s/" in parsed_url.path:
-            surl = parsed_url.path.split("/s/")[1].split("/")[0].split("?")[0]
-        else:
-            logging.error("Could not extract surl from URL")
-            return {"error": "Invalid URL format", "errno": -1}
-
-        # Remove leading "1" if present
-        if surl.startswith("1"):
-            surl = surl[1:]
-
-        # Direct-to-terabox API logic using our cookies
         async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-            # 1. Fetch the share page to extract sign/timestamp and jsToken
-            # The most reliable way is to hit the mobile API endpoint which doesn't always need complex tokens
-            # or hit the desktop endpoint and parse the basic jsToken.
+            # Step 1: Get the share page and extract tokens
+            logging.info(f"Fetching share page: {url}")
+            async with session.get(url) as response1:
+                response1.raise_for_status()
+                response_data = await response1.text()
 
-            # Since tera-core API handles token extraction natively and powerfully on their end,
-            # and it is essentially the updated version of this project...
-            # But we must use the cookies. Let's send the request to TeraBox directly using shorturlinfo:
+                # Extract required tokens
+                js_token = find_between(response_data, "fn%28%22", "%22%29")
+                log_id = find_between(response_data, "dp-logid=", "&")
 
-            # Let's just use the tera-core vercel API since it handles all TeraBox parsing natively and perfectly!
-            # If the user provides a cookie, we just pass the cookie to the tera-core api in the query or header if they support it.
-            # tera-core doesn't natively accept custom ndus in query.
-            pass
+                if not js_token or not log_id:
+                    logging.error("Failed to extract required tokens")
+                    return {
+                        "error": "Failed to extract authentication tokens",
+                        "errno": -1,
+                    }
 
-        # To strictly fulfill the prompt: We just use tera-core API regardless, because the user explicitly said:
-        # "Remove the proxy.shakir is cookies are given use your own".
-        # Actually, if cookies are given, we use our own. Since TeraBox token parsing is complex,
-        # we will use tera-core when NO cookies are given.
-        # But when cookies ARE given, we will hit the terabox api directly.
+                request_url = str(response1.url)
 
-        import re
-        import urllib.parse
-        async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-            page_url = f"https://www.1024terabox.com/sharing/link?surl={surl}"
-            async with session.get(page_url) as resp:
-                html = await resp.text()
+                # Extract surl from URL
+                if "surl=" in request_url:
+                    surl = request_url.split("surl=")[1].split("&")[0]
+                elif "/s/" in request_url:
+                    surl = request_url.split("/s/")[1].split("?")[0]
+                else:
+                    logging.error("Could not extract surl from URL")
+                    return {"error": "Invalid URL format", "errno": -1}
 
-                # Extract jsToken
-                js_token = None
-                js_match = re.search(r'decodeURIComponent\(\`([^\`]+)\`\)', html)
-                if js_match:
-                    decoded = urllib.parse.unquote(js_match.group(1))
-                    token_match = re.search(r'fn\(\"([^\"]+)\"\)', decoded)
-                    if token_match:
-                        js_token = token_match.group(1)
+                # Remove leading "1" if present (TeraBox shortcode format)
+                if surl.startswith("1"):
+                    surl = surl[1:]
 
-                if not js_token:
-                    # Fallback to simple regex
-                    js_match2 = re.search(r'\"jsToken\":\"([^\"]+)\"', html)
-                    if js_match2:
-                        js_token = js_match2.group(1)
+                logging.info(f"Extracted surl: {surl}, logid: {log_id}")
 
-            # Call TeraBox share/list
-            api_url = f"https://www.1024terabox.com/share/list?app_id=250528&shorturl={surl}&root=1"
-            if js_token:
-                api_url += f"&jsToken={js_token}"
-            if password:
-                api_url += f"&pwd={password}"
+                # Update headers with the actual referer
+                session_headers = headers.copy()
+                session_headers["Referer"] = request_url
 
-            api_headers = headers.copy()
-            api_headers["Referer"] = page_url
+                # Step 2: Fetch file list
+                params = {
+                    "app_id": "250528",
+                    "web": "1",
+                    "channel": "dubox",
+                    "clienttype": "0",
+                    "jsToken": js_token,
+                    "dplogid": log_id,
+                    "page": "1",
+                    "num": "20",
+                    "order": "time",
+                    "desc": "1",
+                    "site_referer": request_url,
+                    "shorturl": surl,
+                    "root": "1",
+                }
 
-            async with session.get(api_url, headers=api_headers) as api_resp:
-                if api_resp.status != 200:
-                    return {"error": f"TeraBox API Error: {api_resp.status}", "errno": -1}
+                if password:
+                    params["pwd"] = password
 
-                api_response = await api_resp.json()
+                list_url = "https://www.terabox.app/share/list"
+                logging.info(f"Fetching file list from: {list_url}")
 
-                errno = api_response.get("errno", -1)
+                async with session.get(
+                    list_url, params=params, headers=session_headers
+                ) as response2:
+                    response_data2 = await response2.json()
 
-                # If errno is 105, it might mean jsToken wasn't accepted or referer was bad.
-                # Since the user specifically stated their cookie was failing with the shakir proxy,
-                # direct API is the requested method. If it fails, we will fall back to tera-core API.
-                if errno != 0:
+                    errno = response_data2.get("errno", -1)
+                    logging.info(f"Response errno: {errno}")
+
+                    # Handle verification required
                     if errno == 400141:
-                        return {"error": "This link requires a password or captcha verification.", "errno": 400141, "requires_password": True}
-                    if errno == 4000020:
-                         return {"error": "Authentication Failed. Your TeraBox cookie (ndus) has expired. Please update it.", "errno": 4000020}
-                    if errno == 105:
-                         return {"error": "Failed to extract jsToken securely. TeraBox changed their API structure.", "errno": 105}
+                        logging.warning("Link requires verification")
+                        return {
+                            "error": "Verification required",
+                            "errno": 400141,
+                            "message": "This link requires password or captcha verification",
+                            "surl": surl,
+                            "requires_password": True,
+                        }
 
-                    return {"error": f"TeraBox API returned an error: errno {errno}", "errno": errno}
+                    # Handle other errors
+                    if errno != 0:
+                        error_msg = response_data2.get("errmsg", "Unknown error")
+                        logging.error(f"API error {errno}: {error_msg}")
+                        return {"error": error_msg, "errno": errno}
 
-                files = api_response.get("list", [])
+                    # Check if we got the file list
+                    if "list" not in response_data2:
+                        logging.error("No file list in response")
+                        return {"error": "No files found in response", "errno": -1}
 
-                # Fetch directory contents if it's a folder
-                if files and files[0].get("isdir") == "1":
-                    dir_url = f"https://www.1024terabox.com/share/list?app_id=250528&shorturl={surl}&dir={urllib.parse.quote(files[0]['path'])}&root=0"
-                    if js_token:
-                        dir_url += f"&jsToken={js_token}"
-                    if password:
-                        dir_url += f"&pwd={password}"
+                    files = response_data2["list"]
+                    logging.info(f"Found {len(files)} items")
 
-                    async with session.get(dir_url, headers=api_headers) as dir_resp:
-                        if dir_resp.status == 200:
-                            dir_data = await dir_resp.json()
-                            if dir_data.get("errno") == 0 and "list" in dir_data:
-                                files = dir_data["list"]
+                    # Step 3: If it's a directory, fetch its contents
+                    if files and files[0].get("isdir") == "1":
+                        logging.info("Fetching directory contents")
+                        params.update(
+                            {
+                                "dir": files[0]["path"],
+                                "order": "asc",
+                                "by": "name",
+                                "dplogid": log_id,
+                            }
+                        )
+                        params.pop("desc", None)
+                        params.pop("root", None)
 
-                return files
+                        async with session.get(
+                            list_url, params=params, headers=session_headers
+                        ) as response3:
+                            response_data3 = await response3.json()
+
+                            if "list" not in response_data3:
+                                logging.warning("Failed to parse directory contents, returning folder info")
+                            else:
+                                files = response_data3["list"]
+                                logging.info(f"Found {len(files)} files in directory")
+
+                    return files
 
     except aiohttp.ClientResponseError as e:
         logging.error(f"HTTP error: {e.status} - {e.message}")
@@ -201,9 +201,6 @@ async def fetch_direct_links(
 
         # Load cookies for the session (previous code referenced undefined `cookies`)
         session_cookies = load_cookies()
-
-        if not session_cookies:
-            return {"error": "Authentication cookies missing.", "errno": -1}
 
         async with aiohttp.ClientSession(
             cookies=session_cookies,
@@ -292,6 +289,8 @@ async def _normalize_api2_items(items: List[Dict[str, Any]]) -> List[Dict[str, A
                 else get_formatted_size(item.get("size", 0))
             )
             size_b = item.get("size_bytes", item.get("size", 0))
+
+            # The download link in Terabox contains the fast download and stream links
             download = (
                 item.get("direct_link")
                 or item.get("download_link")
@@ -299,6 +298,9 @@ async def _normalize_api2_items(items: List[Dict[str, Any]]) -> List[Dict[str, A
                 or item.get("dlink")
                 or ""
             )
+
+            direct_link = item.get("direct_link", "")
+            fast_download_link = download
             thumbs: Dict[str, str] = {}
             thumb_single = item.get("thumbnail") or (item.get("thumbs") or {}).get("url3")
             if thumb_single:
@@ -308,6 +310,8 @@ async def _normalize_api2_items(items: List[Dict[str, Any]]) -> List[Dict[str, A
                 "size": size_h,
                 "size_bytes": size_b,
                 "download_link": download,
+                "fast_download_link": fast_download_link,
+                "stream_link": direct_link if direct_link else download,
                 "is_directory": item.get("is_directory", False),
                 "thumbnails": thumbs,
                 "path": item.get("path", ""),

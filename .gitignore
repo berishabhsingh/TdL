@@ -108,10 +108,6 @@ desktop.ini
 # IDEs and editors
 .vscode/
 .idea/
-
-# Bot session
-*.session
-*.session-journal
 *.iml
 *.sublime-project
 *.sublime-workspace

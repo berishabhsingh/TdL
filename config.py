@@ -35,15 +35,6 @@ ALLOWED_HOSTS: set[str] = {
 }
 
 
-# Unified Cloudflare Worker proxy configuration
-PROXY_BASE_URL: str = "https://tbx-proxy.shakir-ansarii075.workers.dev/"
-PROXY_MODE_RESOLVE: str = "resolve"  # Recommended: automatic resolution with jsToken extraction
-PROXY_MODE_PAGE: str = "page"        # For debugging: returns raw HTML
-PROXY_MODE_API: str = "api"          # Manual API access when jsToken is known
-PROXY_MODE_STREAM: str = "stream"    # HLS playlist proxy with segment URL rewriting
-PROXY_MODE_SEGMENT: str = "segment"  # Media segment (.ts, .m4s) proxy
-
-
 # Default HTTP headers for requests
 headers: Dict[str, str] = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
@@ -72,6 +63,11 @@ def load_cookies() -> dict[str, str]:
     data = None
 
     # First try COOKIE_JSON from .env file
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
     cookie_json = os.getenv("COOKIE_JSON")
     if cookie_json:
         try:

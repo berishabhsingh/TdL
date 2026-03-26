@@ -13,17 +13,12 @@ from datetime import datetime, timezone
 import logging
 import time
 import aiohttp
+import os
 
 # Import from our modules
 from config import (
     headers,
     load_cookies,
-    PROXY_BASE_URL,
-    PROXY_MODE_RESOLVE,
-    PROXY_MODE_PAGE,
-    PROXY_MODE_API,
-    PROXY_MODE_STREAM,
-    PROXY_MODE_SEGMENT,
 )
 from utils import is_valid_share_url
 from terabox_client import (
@@ -117,157 +112,27 @@ def health():
     return jsonify({"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()})
 
 
-async def _proxy_request(url: str, params: dict, cookies: dict) -> dict:
-    """Internal helper to make async proxy requests.
-
-    Args:
-        url: Proxy base URL
-        params: Query parameters
-        cookies: Cookie dictionary
-
-    Returns:
-        dict: Response data with content, status, headers, and content_type
-    """
-    try:
-        async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-            async with session.get(url, params=params) as response:
-                content = await response.read()
-
-                # Determine content type
-                content_type = response.headers.get("Content-Type", "application/json")
-
-                # For non-200 responses, try to parse as JSON error
-                if response.status != 200:
-                    try:
-                        error_data = await response.json()
-                        return {
-                            "error": error_data.get("error", "Proxy request failed"),
-                            "status_code": response.status,
-                            "details": error_data
-                        }
-                    except Exception:
-                        return {
-                            "error": f"Proxy returned status {response.status}",
-                            "status_code": response.status,
-                            "details": content.decode("utf-8", errors="ignore")[:500]
-                        }
-
-                # Return successful response
-                return {
-                    "content": content,
-                    "status": response.status,
-                    "headers": dict(response.headers),
-                    "content_type": content_type
-                }
-
-    except Exception as e:
-        logging.error(f"Proxy request error: {e}", exc_info=True)
-        return {
-            "error": str(e),
-            "status_code": 500
-        }
-
-
 
 
 @app.route("/api", methods=["GET"])
 @rate_limit
 async def api():
-    """Unified API endpoint - handles file information and proxy modes.
-
-    Supports two usage patterns:
-    1. Legacy mode: /api?url=... (backward compatible file listing)
-    2. Proxy modes: /api?mode=... (resolve, page, api, stream, segment)
-    """
+    """API endpoint - fetch file information"""
     try:
         start_time = time.time()
-        mode = request.args.get("mode")
         url = request.args.get("url")
 
-        # ===== PROXY MODE LOGIC =====
-        if mode:
-            # Validate mode parameter
-            valid_modes = [PROXY_MODE_RESOLVE, PROXY_MODE_PAGE, PROXY_MODE_API,
-                          PROXY_MODE_STREAM, PROXY_MODE_SEGMENT]
-
-            if mode not in valid_modes:
-                return jsonify({
-                    "error": "Invalid mode",
-                    "allowed": valid_modes,
-                    "provided": mode
-                }), 400
-
-            # Build proxy request parameters
-            params = {"mode": mode}
-
-            # Add all query parameters except 'mode' to the proxy request
-            for key, value in request.args.items():
-                if key != "mode":
-                    params[key] = value
-
-            # Validate required parameters based on mode
-            if mode == PROXY_MODE_RESOLVE:
-                if "surl" not in params:
-                    return jsonify({"error": "Missing required parameter: surl"}), 400
-            elif mode == PROXY_MODE_PAGE:
-                if "surl" not in params:
-                    return jsonify({"error": "Missing required parameter: surl"}), 400
-            elif mode == PROXY_MODE_API:
-                if "jsToken" not in params or "shorturl" not in params:
-                    return jsonify({"error": "Missing required parameters: jsToken and shorturl"}), 400
-            elif mode == PROXY_MODE_STREAM:
-                if "surl" not in params:
-                    return jsonify({"error": "Missing required parameter: surl"}), 400
-            elif mode == PROXY_MODE_SEGMENT:
-                if "url" not in params:
-                    return jsonify({"error": "Missing required parameter: url"}), 400
-
-            # Forward cookies from client request if present
-            cookies = {}
-            if "Cookie" in request.headers:
-                # Parse cookie header
-                cookie_header = request.headers.get("Cookie")
-                for cookie in cookie_header.split(";"):
-                    cookie = cookie.strip()
-                    if "=" in cookie:
-                        key, value = cookie.split("=", 1)
-                        cookies[key.strip()] = value.strip()
-
-            # If no cookies from client, try loading from config
-            if not cookies:
-                cookies = load_cookies()
-
-            # Make proxy request
-            result = await _proxy_request(PROXY_BASE_URL, params, cookies)
-
-            if "error" in result:
-                return jsonify(result), result.get("status_code", 500)
-
-            # Return response with appropriate content type
-            return Response(
-                result["content"],
-                status=result["status"],
-                headers=result["headers"],
-                content_type=result["content_type"]
-            )
-
-        # ===== LEGACY FILE LISTING MODE =====
         if not url:
             return (
                 jsonify(
                     {
                         "status": "error",
-                        "message": "Missing required parameter: url or mode",
-                        "examples": {
-                            "file_listing": "/api?url=https://teraboxshare.com/s/...",
-                            "proxy_resolve": "/api?mode=resolve&surl=abc123",
-                            "proxy_stream": "/api?mode=stream&surl=abc123"
-                        }
+                        "message": "Missing required parameter: url",
+                        "example": "/api?url=https://teraboxshare.com/s/...",
                     }
                 ),
                 400,
             )
-
         if not is_valid_share_url(url):
             return (
                 jsonify(
@@ -286,7 +151,7 @@ async def api():
         # Check cache first
         cached = cache.get(url, password)
         if cached is not None:
-            formatted_files = await _gather_format_file_info(cached)
+            formatted_files = await _normalize_api2_items(cached)
             response_time = format_response_time(time.time() - start_time)
             return jsonify(
                 {
@@ -295,16 +160,16 @@ async def api():
                     "files": formatted_files,
                     "total_files": len(formatted_files),
                     "response_time": response_time,
-                    "cached": True,
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
 
-        link_data = await fetch_download_link(url, password)
+        # Fetch file data with direct links (for fast download & streaming)
+        link_data = await fetch_direct_links(url, password)
 
         # Check if error occurred
         if isinstance(link_data, dict) and "error" in link_data:
-            status_code = 400 if link_data.get("requires_password") else 500
+            status_code = 401 if link_data.get("requires_password") else 500
             return (
                 jsonify(
                     {
@@ -322,13 +187,12 @@ async def api():
         # Format file information
         if link_data:
             cache.put(url, link_data, password)
-            formatted_files = await _gather_format_file_info(link_data)
+            formatted_files = await _normalize_api2_items(link_data)
             response_time = format_response_time(time.time() - start_time)
 
             return jsonify(
                 {
                     "status": "success",
-                    # "used_cookie": cookies.get("ndus", ""), # Removed for privacy
                     "url": url,
                     "files": formatted_files,
                     "total_files": len(formatted_files),
@@ -442,60 +306,12 @@ def help_page():
                 "Endpoints": {
                     "/api": {
                         "method": "GET",
-                        "description": "Unified endpoint - file information and proxy modes",
-                        "usage_patterns": {
-                            "file_listing": {
-                                "description": "Traditional file listing (backward compatible)",
-                                "parameters": {
-                                    "url": "Required - TeraBox share link",
-                                    "pwd": "Optional - Password for protected links",
-                                },
-                                "example": "/api?url=https://teraboxshare.com/s/1ABC...",
-                            },
-                            "proxy_modes": {
-                                "description": "Direct proxy access with multiple modes",
-                                "modes": {
-                                    "resolve": {
-                                        "description": "Auto extract jsToken + fetch share API (recommended)",
-                                        "parameters": {"surl": "Required - Short URL ID"},
-                                        "example": "/api?mode=resolve&surl=abc123",
-                                    },
-                                    "page": {
-                                        "description": "Proxy raw share HTML page",
-                                        "parameters": {"surl": "Required - Short URL ID"},
-                                        "example": "/api?mode=page&surl=abc123",
-                                    },
-                                    "api": {
-                                        "description": "Manual share API proxy (when jsToken is known)",
-                                        "parameters": {
-                                            "jsToken": "Required - JavaScript token",
-                                            "shorturl": "Required - Short URL ID",
-                                            "root": "Optional - Default: 1",
-                                            "dplogid": "Optional - Log ID",
-                                        },
-                                        "example": "/api?mode=api&jsToken=XYZ&shorturl=abc123",
-                                    },
-                                    "stream": {
-                                        "description": "Fetch and rewrite M3U8 playlist for HLS streaming",
-                                        "parameters": {
-                                            "surl": "Required - Short URL ID",
-                                            "type": "Optional - Stream quality (default: M3U8_AUTO_360)",
-                                        },
-                                        "example": "/api?mode=stream&surl=abc123&type=M3U8_AUTO_360",
-                                    },
-                                    "segment": {
-                                        "description": "Proxy media segments (.ts, .m4s)",
-                                        "parameters": {"url": "Required - Encoded segment URL"},
-                                        "example": "/api?mode=segment&url=ENCODED_URL",
-                                    },
-                                },
-                                "notes": [
-                                    "Cookies are forwarded from client request if provided",
-                                    "Use mode=resolve for most use cases",
-                                    "Stream and segment modes enable HLS video playback",
-                                ],
-                            },
+                        "description": "API endpoint - file information",
+                        "parameters": {
+                            "url": "Required - TeraBox share link",
+                            "pwd": "Optional - Password for protected links",
                         },
+                        "example": "/api?url=https://teraboxshare.com/s/1ABC...",
                     },
                     "/api2": {
                         "method": "GET",
@@ -536,7 +352,6 @@ def help_page():
             }
         }
     )
-
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)

@@ -216,8 +216,17 @@ async def handle_link(client: Client, message: Message):
                 # Let's download locally and then upload.
 
                 # Sanitize filename to prevent path traversal
+                # The flowvideoplayer API often provides files via .zip download to bypass browser restrictions
+                # We should extract the actual filename to remove .zip if it exists for the message
                 safe_filename = os.path.basename(filename)
+
+                # The file might be downloaded as a ZIP from the proxy API
+                download_is_zip = False
+                if direct_link.endswith(".zip") or "file_name=" in direct_link and direct_link.split("file_name=")[-1].endswith(".zip"):
+                    download_is_zip = True
+
                 temp_file = f"temp_{message.id}_{safe_filename}"
+                temp_file_dl = temp_file + (".zip" if download_is_zip and not temp_file.endswith(".zip") else "")
                 temp_thumb = f"thumb_{message.id}.jpg"
 
                 try:
@@ -243,7 +252,7 @@ async def handle_link(client: Client, message: Message):
                             last_update_time = [0]
                             action_text = f"Downloading: {filename}"
 
-                            async with aiofiles.open(temp_file, "wb") as f:
+                            async with aiofiles.open(temp_file_dl, "wb") as f:
                                 while True:
                                     chunk = await resp.content.read(1024 * 1024) # 1MB chunk size
                                     if not chunk:
@@ -252,6 +261,40 @@ async def handle_link(client: Client, message: Message):
                                     downloaded += len(chunk)
                                     if total_size > 0:
                                         await progress_bar(downloaded, total_size, status_msg, action_text, start_time, last_update_time)
+
+                        # Extract zip if necessary
+                        if download_is_zip:
+                            await status_msg.edit_text(f"📦 Extracting: {filename}...")
+                            import zipfile
+                            import tempfile
+                            import shutil
+                            try:
+                                # Offload synchronous unzip to a thread
+                                def extract_file():
+                                    with zipfile.ZipFile(temp_file_dl, 'r') as zip_ref:
+                                        # Assume it's a single file archive as packaged by flowvideo
+                                        info_list = zip_ref.infolist()
+                                        if info_list:
+                                            # Create a unique temporary directory to avoid race conditions
+                                            with tempfile.TemporaryDirectory() as temp_dir:
+                                                extracted_path = zip_ref.extract(info_list[0], path=temp_dir)
+                                                shutil.move(extracted_path, temp_file)
+                                                return True
+                                    return False
+
+                                success = await asyncio.to_thread(extract_file)
+                                if not success:
+                                    # Fallback to rename if extraction fails
+                                    os.rename(temp_file_dl, temp_file)
+                                else:
+                                    # Cleanup original zip
+                                    os.remove(temp_file_dl)
+                            except Exception as e:
+                                logger.error(f"Failed to unzip {temp_file_dl}: {e}")
+                                # Fallback rename
+                                os.rename(temp_file_dl, temp_file)
+                        elif temp_file_dl != temp_file:
+                            os.rename(temp_file_dl, temp_file)
 
                         # Download thumbnail if available
                         thumbnail_url = file_info.get("thumbnail")
@@ -306,6 +349,8 @@ async def handle_link(client: Client, message: Message):
                     # Cleanup temp file
                     if os.path.exists(temp_file):
                         os.remove(temp_file)
+                    if 'temp_file_dl' in locals() and os.path.exists(temp_file_dl):
+                        os.remove(temp_file_dl)
                     if os.path.exists(temp_thumb):
                         os.remove(temp_thumb)
 

@@ -12,3 +12,4 @@ tgcrypto
 python-dotenv
 aiofiles
 hachoir
+curl_cffi

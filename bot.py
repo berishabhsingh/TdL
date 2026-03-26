@@ -11,7 +11,7 @@ from pyrogram.types import Message
 from dotenv import load_dotenv
 
 import time
-from terabox_client import fetch_direct_links
+from flowapi import get_flowvideo_links
 from config import load_cookies, headers
 
 from hachoir.parser import createParser
@@ -145,26 +145,20 @@ async def handle_link(client: Client, message: Message):
     async with semaphore:
         try:
             # 1. Fetch direct links
-            links = await fetch_direct_links(url, password)
+            links_response = await get_flowvideo_links(url)
 
-            if isinstance(links, dict) and "error" in links:
-                error_msg = links.get('error')
-                if "403" in str(error_msg):
-                    await status_msg.edit_text(
-                        "❌ <b>Error: 403 Forbidden</b>\n"
-                        "The public TeraBox gateway is currently rate-limited or blocked.\n\n"
-                        "<i>To fix this permanently, the bot owner must configure their own <code>COOKIE_JSON</code> in the .env file.</i>",
-                        parse_mode=ParseMode.HTML
-                    )
-                elif "Empty share list" in str(error_msg) or "deleted" in str(error_msg):
-                    await status_msg.edit_text(
-                        "❌ <b>Link is Empty or Invalid</b>\n"
-                        "The TeraBox link contains no files, has been deleted, or requires a different account cookie.",
-                        parse_mode=ParseMode.HTML
-                    )
-                else:
-                    await status_msg.edit_text(f"❌ <b>Error:</b> {error_msg}", parse_mode=ParseMode.HTML)
+            if isinstance(links_response, dict) and "error" in links_response:
+                error_msg = links_response.get('error')
+                await status_msg.edit_text(f"❌ <b>Error:</b> {error_msg}", parse_mode=ParseMode.HTML)
                 return
+
+            # Depending on how the API returns data, it might be a list directly, or under a key
+            if isinstance(links_response, list):
+                links = links_response
+            elif isinstance(links_response, dict) and "data" in links_response:
+                links = links_response["data"]
+            else:
+                links = [links_response] # wrap dict in list just in case
 
             if not links:
                 await status_msg.edit_text("❌ No files found in this link.")
@@ -172,21 +166,20 @@ async def handle_link(client: Client, message: Message):
 
             # 2. Process each file
             for file_info in links:
-                direct_link = file_info.get("direct_link") or ""
+                direct_link = file_info.get("download_url") or ""
                 direct_link = direct_link.strip()
                 if not direct_link:
                     await message.reply_text(
-                        f"❌ <b>Could not extract the download link for:</b> {file_info.get('filename', 'Unknown')}\n"
+                        f"❌ <b>Could not extract the download link for:</b> {file_info.get('file_name', 'Unknown')}\n"
                         "<i>The link may be password-protected, geo-blocked, or the configured cookies have expired.</i>",
                         parse_mode=ParseMode.HTML
                     )
                     continue
 
-                await status_msg.edit_text(f"📥 Downloading: {file_info.get('filename', 'File')}\nSize: {file_info.get('size', 'Unknown')}")
+                await status_msg.edit_text(f"📥 Downloading: {file_info.get('file_name', 'File')}\nSize: {file_info.get('file_size', 'Unknown')}")
 
                 # Download and upload file
-                direct_link = file_info["direct_link"]
-                filename = file_info.get("filename", "downloaded_file")
+                filename = file_info.get("file_name", "downloaded_file")
 
                 # We can stream download to memory if small, or directly pass the url to Pyrogram if supported,
                 # but usually Pyrogram doesn't stream from arbitrary URLs with auth.
@@ -198,19 +191,13 @@ async def handle_link(client: Client, message: Message):
                 temp_thumb = f"thumb_{message.id}.jpg"
 
                 try:
-                    # We must pass the cookies and proper headers to the download server
-                    # otherwise the CDN will return 403 Forbidden
-                    download_cookies = load_cookies()
-                    download_headers = headers.copy()
-
-                    # Sometimes the backend redirects the download URL, so let's allow redirects
-                    async with aiohttp.ClientSession(cookies=download_cookies) as session:
+                    # The flow API returns standard CDN download URLs that do not require auth cookies
+                    async with aiohttp.ClientSession() as session:
                         # Download main file
-                        async with session.get(direct_link, headers=download_headers, allow_redirects=True) as resp:
+                        async with session.get(direct_link, allow_redirects=True) as resp:
                             if resp.status != 200:
-                                await status_msg.edit_text(f"❌ Failed to download {filename} (Status: {resp.status})\nTry checking if your `COOKIE_JSON` is valid.")
+                                await status_msg.edit_text(f"❌ Failed to download {filename} (Status: {resp.status})")
                                 continue
-
 
                             total_size = int(resp.headers.get("content-length", 0))
                             downloaded = 0
@@ -233,7 +220,7 @@ async def handle_link(client: Client, message: Message):
                         has_thumb = False
                         if thumbnail_url:
                             try:
-                                async with session.get(thumbnail_url, headers=download_headers) as thumb_resp:
+                                async with session.get(thumbnail_url) as thumb_resp:
                                     if thumb_resp.status == 200:
                                         async with aiofiles.open(temp_thumb, "wb") as tf:
                                             await tf.write(await thumb_resp.read())
@@ -248,7 +235,7 @@ async def handle_link(client: Client, message: Message):
                     ext = filename.lower().split('.')[-1] if '.' in filename else ''
 
                     kwargs = {
-                        "caption": f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}\nURL: {url}" if DUMP_CHANNEL_ID else f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}",
+                        "caption": f"File: {filename}\nSize: {file_info.get('file_size', 'Unknown')}\nURL: {url}" if DUMP_CHANNEL_ID else f"File: {filename}\nSize: {file_info.get('file_size', 'Unknown')}",
                         "file_name": filename
                     }
 

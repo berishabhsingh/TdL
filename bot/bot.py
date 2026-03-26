@@ -77,6 +77,23 @@ def format_time(seconds):
         return f"{m}m {s}s"
     return f"{s}s"
 
+async def generate_thumbnail(video_path, thumb_path):
+    try:
+        # Generate thumbnail at 1 second mark using ffmpeg
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-i", video_path,
+            "-ss", "00:00:01.000",
+            "-vframes", "1",
+            thumb_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await process.communicate()
+        return process.returncode == 0 and os.path.exists(thumb_path)
+    except Exception as e:
+        logger.warning(f"Failed to generate thumbnail for {video_path}: {e}")
+        return False
+
 async def progress_bar(current, total, status_msg, action_text, start_time, last_update_time):
     now = time.time()
     # Update every 2 seconds
@@ -242,11 +259,13 @@ async def handle_link(client: Client, message: Message):
                             except Exception as e:
                                 logger.warning(f"Failed to download thumbnail for {filename}: {e}")
 
-                    await status_msg.edit_text(f"📤 Uploading: {filename}...")
-
-
                     # Determine media type for proper upload
                     ext = filename.lower().split('.')[-1] if '.' in filename else ''
+
+                    if not has_thumb and ext in ['mp4', 'mkv', 'avi', 'mov', 'webm']:
+                        has_thumb = await generate_thumbnail(temp_file, temp_thumb)
+
+                    await status_msg.edit_text(f"📤 Uploading: {filename}...")
 
                     kwargs = {
                         "caption": f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}\nURL: {url}" if DUMP_CHANNEL_ID else f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}",

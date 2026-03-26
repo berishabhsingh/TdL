@@ -1,0 +1,6 @@
+pyrogram
+tgcrypto
+python-dotenv
+aiofiles
+hachoir
+aiohttp>=3.8,<4

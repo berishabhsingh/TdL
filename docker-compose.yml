@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  terabox-bot:
+    build: .
+    container_name: terabox-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    # Set the DNS to 1.1.1.1 as requested
+    dns:
+      - 1.1.1.1
+    # We can run both bot and api but bot is the requested main execution
+    command: python bot.py

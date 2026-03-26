@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 import time
 
+from flowapi import get_flowvideo_links
 from hachoir.parser import createParser
 from hachoir.metadata import extractMetadata
 
@@ -143,22 +144,29 @@ async def handle_link(client: Client, message: Message):
 
     async with semaphore:
         try:
-            # 1. Fetch direct links via external API
-            api_endpoint = f"{API_URL}?url={url}"
-            if password:
-                api_endpoint += f"&pwd={password}"
-
+            # 1. Fetch direct links via external API (using flowapi.py)
             links = None
-            async with aiohttp.ClientSession() as session:
-                async with session.get(api_endpoint) as resp:
-                    if resp.status != 200:
-                        links = {"error": f"API returned status {resp.status}"}
-                    else:
-                        data = await resp.json()
-                        if data.get("status") == "success":
-                            links = data.get("files", [])
-                        else:
-                            links = {"error": data.get("message", "Unknown API error")}
+            try:
+                # Offload synchronous requests to a separate thread to not block event loop
+                data = await asyncio.to_thread(get_flowvideo_links, url)
+
+                if isinstance(data, dict) and data.get("error"):
+                    links = {"error": data.get("error", "Unknown API error")}
+                elif "data" in data:
+                    # Map flowvideoplayer output structure to bot expected structure
+                    links = [
+                        {
+                            "filename": item.get("file_name", "Unknown"),
+                            "size": item.get("file_size", "Unknown"),
+                            "direct_link": item.get("download_url") or item.get("stream_final_url"),
+                            "thumbnail": item.get("thumbnail")
+                        }
+                        for item in data["data"]
+                    ]
+                else:
+                    links = {"error": "Invalid API response format"}
+            except Exception as e:
+                links = {"error": f"Failed to fetch data: {e}"}
 
             if isinstance(links, dict) and "error" in links:
                 error_msg = links.get('error')

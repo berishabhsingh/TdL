@@ -35,7 +35,9 @@ A Telegram bot that acts as a TeraBox downloader.
 **Deployment:**
 1. Navigate to the `bot/` directory.
 2. Deploy to Railway or a similar service.
-3. Set your environment variables (`BOT_TOKEN`, `BOT_API_ID`, `BOT_API_HASH`, `COOKIE_JSON`, etc.) in your hosting provider's dashboard.
+3. Set your environment variables (`BOT_TOKEN`, `BOT_API_ID`, `BOT_API_HASH`, `API_URL`) in your hosting provider's dashboard.
+   - `API_URL`: The URL of your deployed Vercel API (e.g., `https://td-l.vercel.app/api2`). If you don't set this, it will default to a placeholder.
+   - Note: The bot no longer requires a `COOKIE_JSON`.
 
 **Local Usage:**
 ```bash

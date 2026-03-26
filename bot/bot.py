@@ -11,8 +11,6 @@ from pyrogram.types import Message
 from dotenv import load_dotenv
 
 import time
-from terabox_client import fetch_direct_links
-from config import load_cookies, headers
 
 from hachoir.parser import createParser
 from hachoir.metadata import extractMetadata
@@ -32,6 +30,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = os.getenv("BOT_API_ID")
 API_HASH = os.getenv("BOT_API_HASH")
 DUMP_CHANNEL_ID = os.getenv("DUMP_CHANNEL_ID")
+API_URL = os.getenv("API_URL", "https://td-l.vercel.app/api2")
 
 if DUMP_CHANNEL_ID:
     try:
@@ -144,26 +143,26 @@ async def handle_link(client: Client, message: Message):
 
     async with semaphore:
         try:
-            # 1. Fetch direct links
-            links = await fetch_direct_links(url, password)
+            # 1. Fetch direct links via external API
+            api_endpoint = f"{API_URL}?url={url}"
+            if password:
+                api_endpoint += f"&pwd={password}"
+
+            links = None
+            async with aiohttp.ClientSession() as session:
+                async with session.get(api_endpoint) as resp:
+                    if resp.status != 200:
+                        links = {"error": f"API returned status {resp.status}"}
+                    else:
+                        data = await resp.json()
+                        if data.get("status") == "success":
+                            links = data.get("files", [])
+                        else:
+                            links = {"error": data.get("message", "Unknown API error")}
 
             if isinstance(links, dict) and "error" in links:
                 error_msg = links.get('error')
-                if "403" in str(error_msg):
-                    await status_msg.edit_text(
-                        "❌ <b>Error: 403 Forbidden</b>\n"
-                        "The public TeraBox gateway is currently rate-limited or blocked.\n\n"
-                        "<i>To fix this permanently, the bot owner must configure their own <code>COOKIE_JSON</code> in the .env file.</i>",
-                        parse_mode=ParseMode.HTML
-                    )
-                elif "Empty share list" in str(error_msg) or "deleted" in str(error_msg):
-                    await status_msg.edit_text(
-                        "❌ <b>Link is Empty or Invalid</b>\n"
-                        "The TeraBox link contains no files, has been deleted, or requires a different account cookie.",
-                        parse_mode=ParseMode.HTML
-                    )
-                else:
-                    await status_msg.edit_text(f"❌ <b>Error:</b> {error_msg}", parse_mode=ParseMode.HTML)
+                await status_msg.edit_text(f"❌ <b>Error:</b> {error_msg}", parse_mode=ParseMode.HTML)
                 return
 
             if not links:
@@ -172,7 +171,7 @@ async def handle_link(client: Client, message: Message):
 
             # 2. Process each file
             for file_info in links:
-                direct_link = file_info.get("direct_link") or ""
+                direct_link = (file_info.get("direct_link") or file_info.get("download_link") or file_info.get("link") or "")
                 direct_link = direct_link.strip()
                 if not direct_link:
                     await message.reply_text(
@@ -198,17 +197,19 @@ async def handle_link(client: Client, message: Message):
                 temp_thumb = f"thumb_{message.id}.jpg"
 
                 try:
-                    # We must pass the cookies and proper headers to the download server
-                    # otherwise the CDN will return 403 Forbidden
-                    download_cookies = load_cookies()
-                    download_headers = headers.copy()
+                    download_headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+                        "Accept": "*/*",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Connection": "keep-alive",
+                    }
 
-                    # Sometimes the backend redirects the download URL, so let's allow redirects
-                    async with aiohttp.ClientSession(cookies=download_cookies) as session:
+                    # No cookies are passed, TeraBox direct links usually work without them for the specific short-lived token
+                    async with aiohttp.ClientSession() as session:
                         # Download main file
                         async with session.get(direct_link, headers=download_headers, allow_redirects=True) as resp:
                             if resp.status != 200:
-                                await status_msg.edit_text(f"❌ Failed to download {filename} (Status: {resp.status})\nTry checking if your `COOKIE_JSON` is valid.")
+                                await status_msg.edit_text(f"❌ Failed to download {filename} (Status: {resp.status})\nMake sure your API server's cookies are valid.")
                                 continue
 
 

@@ -56,16 +56,32 @@ def format_bytes(size):
         n += 1
     return f"{size:.2f} {power_labels[n]}B"
 
+import subprocess
+
 def get_video_duration(filepath):
     try:
-        parser = createParser(filepath)
-        if not parser:
-            return 0
-        metadata = extractMetadata(parser)
-        if metadata and metadata.has("duration"):
-            return metadata.get("duration").seconds
-    except Exception as e:
-        logger.warning(f"Failed to extract video duration for {filepath}: {e}")
+        # First try using ffprobe (requires ffmpeg installed on host)
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries",
+             "format=duration", "-of",
+             "default=noprint_wrappers=1:nokey=1", filepath],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT
+        )
+        duration = float(result.stdout)
+        return int(duration)
+    except Exception as ffmpeg_err:
+        logger.warning(f"ffprobe failed for {filepath}: {ffmpeg_err}, falling back to hachoir")
+        # Fallback to hachoir
+        try:
+            parser = createParser(filepath)
+            if not parser:
+                return 0
+            metadata = extractMetadata(parser)
+            if metadata and metadata.has("duration"):
+                return metadata.get("duration").seconds
+        except Exception as e:
+            logger.warning(f"Failed to extract video duration for {filepath} with hachoir: {e}")
     return 0
 
 def format_time(seconds):
@@ -229,7 +245,7 @@ async def handle_link(client: Client, message: Message):
 
                             async with aiofiles.open(temp_file, "wb") as f:
                                 while True:
-                                    chunk = await resp.content.read(8192)
+                                    chunk = await resp.content.read(1024 * 1024) # 1MB chunk size
                                     if not chunk:
                                         break
                                     await f.write(chunk)

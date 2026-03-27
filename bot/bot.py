@@ -17,6 +17,8 @@ from flowapi import get_flowvideo_links
 from hachoir.parser import createParser
 from hachoir.metadata import extractMetadata
 
+from database import db
+
 # Load environment variables
 load_dotenv()
 
@@ -32,7 +34,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 API_ID = os.getenv("BOT_API_ID")
 API_HASH = os.getenv("BOT_API_HASH")
 DUMP_CHANNEL_ID = os.getenv("DUMP_CHANNEL_ID")
+OWNER_ID = os.getenv("OWNER_ID")
 API_URL = os.getenv("API_URL", "https://td-l.vercel.app/api2")
+
+if OWNER_ID:
+    try:
+        OWNER_ID = int(OWNER_ID)
+    except ValueError:
+        pass
 
 if DUMP_CHANNEL_ID:
     try:
@@ -262,12 +271,83 @@ app = Client(
 
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
+    user_id = message.from_user.id
+    await db.add_user(user_id)
     await message.reply_text(
         "🎉 Welcome! I am a high-speed TeraBox downloader bot.\n\n"
         "🔗 Send me a TeraBox link and I'll securely download and send you the file directly here.\n"
         "🛑 Use /cancel to stop all your active downloads.\n"
         "🌐 Supported domains: terabox.com, teraboxapp.com, etc."
     )
+
+@app.on_message(filters.command("block") & filters.user(OWNER_ID) if OWNER_ID else filters.command("block") & filters.user([]))
+async def block_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /block <user_id>")
+    try:
+        user_id = int(message.command[1])
+        await db.block_user(user_id)
+        await message.reply_text(f"User {user_id} blocked successfully.")
+    except ValueError:
+        await message.reply_text("Invalid user ID.")
+
+@app.on_message(filters.command("unblock") & filters.user(OWNER_ID) if OWNER_ID else filters.command("unblock") & filters.user([]))
+async def unblock_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /unblock <user_id>")
+    try:
+        user_id = int(message.command[1])
+        await db.unblock_user(user_id)
+        await message.reply_text(f"User {user_id} unblocked successfully.")
+    except ValueError:
+        await message.reply_text("Invalid user ID.")
+
+@app.on_message(filters.command("approve") & filters.user(OWNER_ID) if OWNER_ID else filters.command("approve") & filters.user([]))
+async def approve_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /approve <user_id>")
+    try:
+        user_id = int(message.command[1])
+        await db.approve_user(user_id)
+        await message.reply_text(f"User {user_id} approved successfully. They now have no limits.")
+    except ValueError:
+        await message.reply_text("Invalid user ID.")
+
+@app.on_message(filters.command("disapprove") & filters.user(OWNER_ID) if OWNER_ID else filters.command("disapprove") & filters.user([]))
+async def disapprove_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /disapprove <user_id>")
+    try:
+        user_id = int(message.command[1])
+        await db.disapprove_user(user_id)
+        await message.reply_text(f"User {user_id} disapproved successfully. They are back to normal limits.")
+    except ValueError:
+        await message.reply_text("Invalid user ID.")
+
+@app.on_message(filters.command("broadcast") & filters.user(OWNER_ID) if OWNER_ID else filters.command("broadcast") & filters.user([]))
+async def broadcast_command(client: Client, message: Message):
+    if not message.reply_to_message and len(message.command) < 2:
+        return await message.reply_text("Usage: /broadcast <message> or reply to a message.")
+
+    users = await db.get_all_users()
+    total_users = len(users)
+    await message.reply_text(f"Broadcasting to {total_users} users...")
+
+    sent = 0
+    failed = 0
+    for user in users:
+        try:
+            if message.reply_to_message:
+                await message.reply_to_message.copy(user["user_id"])
+            else:
+                msg_text = message.text.split(maxsplit=1)[1]
+                await client.send_message(user["user_id"], msg_text)
+            sent += 1
+            await asyncio.sleep(0.1) # Prevent FloodWait
+        except Exception:
+            failed += 1
+
+    await message.reply_text(f"Broadcast completed.\nSent: {sent}\nFailed: {failed}")
 
 @app.on_message(filters.command("cancel"))
 async def cancel_command(client: Client, message: Message):
@@ -294,6 +374,17 @@ async def cancel_callback(client: Client, callback_query: CallbackQuery):
 @app.on_message(filters.text & filters.regex(r"http[s]?://[^\s]+"))
 async def handle_link(client: Client, message: Message):
     user_id = message.from_user.id
+
+    # Check block status
+    user = await db.get_user(user_id)
+    if user and user.get("is_blocked"):
+        return await message.reply_text("❌ You are blocked from using this bot.")
+
+    # Check limit
+    allowed = await db.check_and_update_limit(user_id)
+    if not allowed:
+        return await message.reply_text("❌ You have reached your daily limit of 10 links. Please try again tomorrow or contact the owner.")
+
     current_task = asyncio.current_task()
 
     if user_id not in user_tasks:

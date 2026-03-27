@@ -7,7 +7,7 @@ import pyrogram
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait
-from pyrogram.types import Message
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from dotenv import load_dotenv
 
 import time
@@ -42,6 +42,9 @@ if DUMP_CHANNEL_ID:
 # Concurrency control for downloads/uploads (max concurrent operations)
 MAX_CONCURRENT_TASKS = 100
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
+
+# Track running tasks by user_id for cancellation
+user_tasks = {}
 
 if not BOT_TOKEN or not API_ID or not API_HASH:
     logger.warning("Bot credentials are not fully set. Please check your .env file.")
@@ -121,8 +124,12 @@ async def progress_bar(current, total, status_msg, action_text, start_time, last
     text += f"🚀 <b>Speed:</b> {format_bytes(speed)}/s\n"
     text += f"⏳ <b>ETA:</b> {format_time(eta)}"
 
+    markup = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🛑 Cancel", callback_data="cancel_tasks")]]
+    )
+
     try:
-        await status_msg.edit_text(text, parse_mode=ParseMode.HTML)
+        await status_msg.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=markup)
     except FloodWait as e:
         await asyncio.sleep(e.value)
     except Exception:
@@ -142,11 +149,41 @@ async def start_command(client: Client, message: Message):
     await message.reply_text(
         "👋 Welcome! I am a TeraBox downloader bot.\n\n"
         "Send me a TeraBox link and I'll send you the file directly here.\n"
+        "Use /cancel to stop all your running downloads.\n"
         "Supported domains: terabox.com, teraboxapp.com, etc."
     )
 
+@app.on_message(filters.command("cancel"))
+async def cancel_command(client: Client, message: Message):
+    user_id = message.from_user.id
+    if user_id in user_tasks and user_tasks[user_id]:
+        for task in user_tasks[user_id]:
+            task.cancel()
+        user_tasks[user_id] = []
+        await message.reply_text("🛑 <b>All your tasks have been cancelled.</b>", parse_mode=ParseMode.HTML)
+    else:
+        await message.reply_text("You have no running tasks.")
+
+@app.on_callback_query(filters.regex("^cancel_tasks$"))
+async def cancel_callback(client: Client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    if user_id in user_tasks and user_tasks[user_id]:
+        for task in user_tasks[user_id]:
+            task.cancel()
+        user_tasks[user_id] = []
+        await callback_query.message.edit_text("🛑 <b>Task Cancelled.</b>", parse_mode=ParseMode.HTML)
+    else:
+        await callback_query.answer("No running tasks to cancel.", show_alert=True)
+
 @app.on_message(filters.text & filters.regex(r"http[s]?://[^\s]+"))
 async def handle_link(client: Client, message: Message):
+    user_id = message.from_user.id
+    current_task = asyncio.current_task()
+
+    if user_id not in user_tasks:
+        user_tasks[user_id] = []
+    user_tasks[user_id].append(current_task)
+
     # Extract url and optional password (e.g., "https://terabox.com/s/123 mypass")
     parts = message.text.split(maxsplit=1)
     url = parts[0]
@@ -154,12 +191,17 @@ async def handle_link(client: Client, message: Message):
 
     # Simple check if url contains terabox
     if "tera" not in url.lower() and "1024" not in url.lower():
+        if current_task in user_tasks[user_id]:
+            user_tasks[user_id].remove(current_task)
         return
 
-    status_msg = await message.reply_text("🔄 Processing your link...", disable_web_page_preview=True)
+    markup = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🛑 Cancel", callback_data="cancel_tasks")]]
+    )
+    status_msg = await message.reply_text("🔄 Processing your link...", disable_web_page_preview=True, reply_markup=markup)
 
-    async with semaphore:
-        try:
+    try:
+        async with semaphore:
             # 1. Fetch direct links via external API (using flowapi.py)
             links = None
             try:
@@ -315,8 +357,16 @@ async def handle_link(client: Client, message: Message):
                     # Determine media type for proper upload
                     ext = filename.lower().split('.')[-1] if '.' in filename else ''
 
+                    # Set up caption for dump channel with user info, and a clean caption for the user
+                    user_mention = message.from_user.mention
+                    user_id_text = f"#{message.from_user.id}"
+
+                    dump_caption = (f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}\n"
+                                    f"URL: {url}\n👤 By: {user_mention}\n🆔 {user_id_text}")
+                    user_caption = f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}"
+
                     kwargs = {
-                        "caption": f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}\nURL: {url}" if DUMP_CHANNEL_ID else f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}",
+                        "caption": dump_caption if DUMP_CHANNEL_ID else user_caption,
                         "file_name": filename
                     }
 
@@ -344,7 +394,7 @@ async def handle_link(client: Client, message: Message):
 
                     # Forward to user if sent to dump channel
                     if DUMP_CHANNEL_ID:
-                        await uploaded_msg.copy(message.chat.id)
+                        await uploaded_msg.copy(message.chat.id, caption=user_caption)
                 finally:
                     # Cleanup temp file
                     if os.path.exists(temp_file):
@@ -356,15 +406,21 @@ async def handle_link(client: Client, message: Message):
 
             await status_msg.delete()
 
-        except FloodWait as e:
-            logger.warning(f"FloodWait encountered: sleeping for {e.value} seconds.")
-            await status_msg.edit_text(f"⏳ Rate limited by Telegram. Waiting for {e.value} seconds...")
-            await asyncio.sleep(e.value)
-            await status_msg.edit_text("🔄 Retrying...")
-            # Ideally retry logic should be implemented, but sleeping is a start
-        except Exception as e:
-            logger.error(f"Error processing {url}: {e}", exc_info=True)
-            await status_msg.edit_text(f"❌ An unexpected error occurred.")
+    except asyncio.CancelledError:
+        logger.info(f"Task for user {user_id} was cancelled.")
+        await status_msg.edit_text("🛑 <b>Task Cancelled.</b>", parse_mode=ParseMode.HTML)
+    except FloodWait as e:
+        logger.warning(f"FloodWait encountered: sleeping for {e.value} seconds.")
+        await status_msg.edit_text(f"⏳ Rate limited by Telegram. Waiting for {e.value} seconds...")
+        await asyncio.sleep(e.value)
+        await status_msg.edit_text("🔄 Retrying...")
+        # Ideally retry logic should be implemented, but sleeping is a start
+    except Exception as e:
+        logger.error(f"Error processing {url}: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ An unexpected error occurred.")
+    finally:
+        if current_task in user_tasks[user_id]:
+            user_tasks[user_id].remove(current_task)
 
 if __name__ == "__main__":
     logger.info("Starting bot...")

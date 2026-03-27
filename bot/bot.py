@@ -97,6 +97,73 @@ def format_time(seconds):
         return f"{m}m {s}s"
     return f"{s}s"
 
+async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=4):
+    """Downloads a file fast by using multiple concurrent connections if the server supports range requests."""
+    async with aiohttp.ClientSession() as session:
+        # Check if the server supports range requests
+        async with session.head(url, headers=headers, allow_redirects=True) as resp:
+            total_size = int(resp.headers.get("content-length", 0))
+            accept_ranges = resp.headers.get("accept-ranges", "none")
+
+        if total_size > 0 and accept_ranges == "bytes":
+            # Concurrent download
+            chunk_size = total_size // max_concurrent
+            ranges = []
+            for i in range(max_concurrent):
+                start = i * chunk_size
+                end = total_size - 1 if i == max_concurrent - 1 else (i + 1) * chunk_size - 1
+                ranges.append((start, end))
+
+            downloaded = [0] * max_concurrent
+
+            async def download_chunk(i, start, end):
+                chunk_headers = headers.copy()
+                chunk_headers["Range"] = f"bytes={start}-{end}"
+                async with session.get(url, headers=chunk_headers) as chunk_resp:
+                    part_file = f"{filepath}.part{i}"
+                    async with aiofiles.open(part_file, "wb") as f:
+                        while True:
+                            chunk = await chunk_resp.content.read(4 * 1024 * 1024)
+                            if not chunk:
+                                break
+                            await f.write(chunk)
+                            downloaded[i] += len(chunk)
+                            total_downloaded = sum(downloaded)
+                            await progress_bar(total_downloaded, total_size, status_msg, action_text, start_time, last_update_time)
+
+            tasks = [download_chunk(i, start, end) for i, (start, end) in enumerate(ranges)]
+            await asyncio.gather(*tasks)
+
+            # Combine parts
+            async with aiofiles.open(filepath, "wb") as outfile:
+                for i in range(max_concurrent):
+                    part_file = f"{filepath}.part{i}"
+                    async with aiofiles.open(part_file, "rb") as infile:
+                        while True:
+                            chunk = await infile.read(10 * 1024 * 1024)
+                            if not chunk:
+                                break
+                            await outfile.write(chunk)
+                    os.remove(part_file)
+            return True
+        else:
+            # Fallback to single-connection chunked download
+            async with session.get(url, headers=headers, allow_redirects=True) as resp:
+                if resp.status != 200:
+                    return False
+                total_size = int(resp.headers.get("content-length", 0))
+                downloaded = 0
+                async with aiofiles.open(filepath, "wb") as f:
+                    while True:
+                        chunk = await resp.content.read(4 * 1024 * 1024)
+                        if not chunk:
+                            break
+                        await f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            await progress_bar(downloaded, total_size, status_msg, action_text, start_time, last_update_time)
+                return True
+
 async def progress_bar(current, total, status_msg, action_text, start_time, last_update_time):
     now = time.time()
     # Update every 2 seconds
@@ -147,10 +214,10 @@ app = Client(
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
     await message.reply_text(
-        "👋 Welcome! I am a TeraBox downloader bot.\n\n"
-        "Send me a TeraBox link and I'll send you the file directly here.\n"
-        "Use /cancel to stop all your running downloads.\n"
-        "Supported domains: terabox.com, teraboxapp.com, etc."
+        "🎉 Welcome! I am a high-speed TeraBox downloader bot.\n\n"
+        "🔗 Send me a TeraBox link and I'll securely download and send you the file directly here.\n"
+        "🛑 Use /cancel to stop all your active downloads.\n"
+        "🌐 Supported domains: terabox.com, teraboxapp.com, etc."
     )
 
 @app.on_message(filters.command("cancel"))
@@ -279,77 +346,74 @@ async def handle_link(client: Client, message: Message):
                         "Connection": "keep-alive",
                     }
 
+                    start_time = time.time()
+                    last_update_time = [0]
+                    action_text = f"Downloading: {filename}"
+
+                    # Download main file fast
                     # No cookies are passed, TeraBox direct links usually work without them for the specific short-lived token
-                    async with aiohttp.ClientSession() as session:
-                        # Download main file
-                        async with session.get(direct_link, headers=download_headers, allow_redirects=True) as resp:
-                            if resp.status != 200:
-                                await status_msg.edit_text(f"❌ Failed to download {filename} (Status: {resp.status})\nMake sure your API server's cookies are valid.")
-                                continue
+                    success = await fast_download(
+                        direct_link,
+                        download_headers,
+                        temp_file_dl,
+                        status_msg,
+                        action_text,
+                        start_time,
+                        last_update_time,
+                        max_concurrent=4
+                    )
 
+                    if not success:
+                        await status_msg.edit_text(f"❌ Failed to download {filename}\nMake sure your API server's cookies are valid.")
+                        continue
 
-                            total_size = int(resp.headers.get("content-length", 0))
-                            downloaded = 0
-                            start_time = time.time()
-                            last_update_time = [0]
-                            action_text = f"Downloading: {filename}"
+                    # Extract zip if necessary
+                    if download_is_zip:
+                        await status_msg.edit_text(f"📦 Extracting: {filename}...")
+                        import zipfile
+                        import tempfile
+                        import shutil
+                        try:
+                            # Offload synchronous unzip to a thread
+                            def extract_file():
+                                with zipfile.ZipFile(temp_file_dl, 'r') as zip_ref:
+                                    # Assume it's a single file archive as packaged by flowvideo
+                                    info_list = zip_ref.infolist()
+                                    if info_list:
+                                        # Create a unique temporary directory to avoid race conditions
+                                        with tempfile.TemporaryDirectory() as temp_dir:
+                                            extracted_path = zip_ref.extract(info_list[0], path=temp_dir)
+                                            shutil.move(extracted_path, temp_file)
+                                            return True
+                                return False
 
-                            async with aiofiles.open(temp_file_dl, "wb") as f:
-                                while True:
-                                    chunk = await resp.content.read(1024 * 1024) # 1MB chunk size
-                                    if not chunk:
-                                        break
-                                    await f.write(chunk)
-                                    downloaded += len(chunk)
-                                    if total_size > 0:
-                                        await progress_bar(downloaded, total_size, status_msg, action_text, start_time, last_update_time)
-
-                        # Extract zip if necessary
-                        if download_is_zip:
-                            await status_msg.edit_text(f"📦 Extracting: {filename}...")
-                            import zipfile
-                            import tempfile
-                            import shutil
-                            try:
-                                # Offload synchronous unzip to a thread
-                                def extract_file():
-                                    with zipfile.ZipFile(temp_file_dl, 'r') as zip_ref:
-                                        # Assume it's a single file archive as packaged by flowvideo
-                                        info_list = zip_ref.infolist()
-                                        if info_list:
-                                            # Create a unique temporary directory to avoid race conditions
-                                            with tempfile.TemporaryDirectory() as temp_dir:
-                                                extracted_path = zip_ref.extract(info_list[0], path=temp_dir)
-                                                shutil.move(extracted_path, temp_file)
-                                                return True
-                                    return False
-
-                                success = await asyncio.to_thread(extract_file)
-                                if not success:
-                                    # Fallback to rename if extraction fails
-                                    os.rename(temp_file_dl, temp_file)
-                                else:
-                                    # Cleanup original zip
-                                    os.remove(temp_file_dl)
-                            except Exception as e:
-                                logger.error(f"Failed to unzip {temp_file_dl}: {e}")
-                                # Fallback rename
+                            success = await asyncio.to_thread(extract_file)
+                            if not success:
+                                # Fallback to rename if extraction fails
                                 os.rename(temp_file_dl, temp_file)
-                        elif temp_file_dl != temp_file:
+                            else:
+                                # Cleanup original zip
+                                os.remove(temp_file_dl)
+                        except Exception as e:
+                            logger.error(f"Failed to unzip {temp_file_dl}: {e}")
+                            # Fallback rename
                             os.rename(temp_file_dl, temp_file)
+                    elif temp_file_dl != temp_file:
+                        os.rename(temp_file_dl, temp_file)
 
-                        # Download thumbnail if available
-                        thumbnail_url = file_info.get("thumbnail")
-                        has_thumb = False
-                        if thumbnail_url:
-                            try:
+                    # Download thumbnail if available
+                    thumbnail_url = file_info.get("thumbnail")
+                    has_thumb = False
+                    if thumbnail_url:
+                        try:
+                            async with aiohttp.ClientSession() as session:
                                 async with session.get(thumbnail_url, headers=download_headers) as thumb_resp:
                                     if thumb_resp.status == 200:
                                         async with aiofiles.open(temp_thumb, "wb") as tf:
                                             await tf.write(await thumb_resp.read())
                                             has_thumb = True
-                            except Exception as e:
-                                logger.warning(f"Failed to download thumbnail for {filename}: {e}")
+                        except Exception as e:
+                            logger.warning(f"Failed to download thumbnail for {filename}: {e}")
 
                     await status_msg.edit_text(f"📤 Uploading: {filename}...")
 
@@ -361,9 +425,9 @@ async def handle_link(client: Client, message: Message):
                     user_mention = message.from_user.mention
                     user_id_text = f"#{message.from_user.id}"
 
-                    dump_caption = (f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}\n"
-                                    f"URL: {url}\n👤 By: {user_mention}\n🆔 {user_id_text}")
-                    user_caption = f"File: {filename}\nSize: {file_info.get('size', 'Unknown')}"
+                    dump_caption = (f"📄 File: {filename}\n📦 Size: {file_info.get('size', 'Unknown')}\n"
+                                    f"👤 By: {user_mention}\n🆔 {user_id_text}")
+                    user_caption = f"📄 File: {filename}\n📦 Size: {file_info.get('size', 'Unknown')}"
 
                     kwargs = {
                         "caption": dump_caption if DUMP_CHANNEL_ID else user_caption,

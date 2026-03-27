@@ -36,10 +36,9 @@ API_URL = os.getenv("API_URL", "https://td-l.vercel.app/api2")
 
 if DUMP_CHANNEL_ID:
     try:
-        DUMP_CHANNEL_ID = int(DUMP_CHANNEL_ID.strip())
-    except (ValueError, AttributeError):
-        logger.error(f"Invalid DUMP_CHANNEL_ID format: {DUMP_CHANNEL_ID}")
-        DUMP_CHANNEL_ID = None
+        DUMP_CHANNEL_ID = int(DUMP_CHANNEL_ID)
+    except ValueError:
+        pass
 
 # Concurrency control for downloads/uploads (max concurrent operations)
 MAX_CONCURRENT_TASKS = 100
@@ -212,17 +211,6 @@ app = Client(
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
 )
-
-# Ensure dump channel is accessible on startup (fixes new session issues)
-@app.on_startup
-async def ensure_dump_channel(client: Client):
-    if not DUMP_CHANNEL_ID:
-        return
-    try:
-        chat = await client.get_chat(DUMP_CHANNEL_ID)
-        logger.info(f"Dump channel ready: {chat.title} ({chat.id})")
-    except Exception as e:
-        logger.error(f"Failed to access dump channel {DUMP_CHANNEL_ID}: {e}")
 
 @app.on_message(filters.command("start"))
 async def start_command(client: Client, message: Message):
@@ -453,39 +441,25 @@ async def handle_link(client: Client, message: Message):
                     # Upload to dump channel first if configured
                     target_chat = DUMP_CHANNEL_ID if DUMP_CHANNEL_ID else message.chat.id
 
-                    try:
-                        if ext in ['mp4', 'mkv', 'avi', 'mov', 'webm']:
-                            duration = get_video_duration(temp_file)
-                            if duration > 0:
-                                kwargs["duration"] = duration
-                            uploaded_msg = await client.send_video(chat_id=target_chat, video=temp_file, **kwargs)
-                        elif ext in ['jpg', 'jpeg', 'png', 'webp']:
-                            # send_photo does not support file_name parameter in Pyrogram
-                            photo_kwargs = kwargs.copy()
-                            photo_kwargs.pop("file_name", None)
-                            photo_kwargs.pop("thumb", None) # send_photo uses photo directly, no thumb param
-                            uploaded_msg = await client.send_photo(chat_id=target_chat, photo=temp_file, **photo_kwargs)
-                        elif ext in ['mp3', 'm4a', 'flac', 'wav']:
-                            uploaded_msg = await client.send_audio(chat_id=target_chat, audio=temp_file, **kwargs)
-                        else:
-                            uploaded_msg = await client.send_document(chat_id=target_chat, document=temp_file, **kwargs)
+                    if ext in ['mp4', 'mkv', 'avi', 'mov', 'webm']:
+                        duration = get_video_duration(temp_file)
+                        if duration > 0:
+                            kwargs["duration"] = duration
+                        uploaded_msg = await client.send_video(chat_id=target_chat, video=temp_file, **kwargs)
+                    elif ext in ['jpg', 'jpeg', 'png', 'webp']:
+                        # send_photo does not support file_name parameter in Pyrogram
+                        photo_kwargs = kwargs.copy()
+                        photo_kwargs.pop("file_name", None)
+                        photo_kwargs.pop("thumb", None) # send_photo uses photo directly, no thumb param
+                        uploaded_msg = await client.send_photo(chat_id=target_chat, photo=temp_file, **photo_kwargs)
+                    elif ext in ['mp3', 'm4a', 'flac', 'wav']:
+                        uploaded_msg = await client.send_audio(chat_id=target_chat, audio=temp_file, **kwargs)
+                    else:
+                        uploaded_msg = await client.send_document(chat_id=target_chat, document=temp_file, **kwargs)
 
-                        # Forward to user if sent to dump channel
-                        if DUMP_CHANNEL_ID:
-                            await uploaded_msg.copy(message.chat.id, caption=user_caption)
-                    except pyrogram.errors.PeerIdInvalid:
-                        logger.error("PeerIdInvalid - Dump channel not accessible in this session")
-                        await message.reply_text("❌ Dump channel error (Peer ID invalid). Please restart the bot or send /start first.")
-                        continue
-                    except pyrogram.errors.ChannelInvalid:
-                        logger.error("ChannelInvalid - Dump channel not accessible")
-                        await message.reply_text("❌ Dump channel error (Channel invalid). Make sure the bot is admin in the channel.")
-                        continue
-                    except Exception as upload_err:
-                        logger.error(f"Upload failed to dump channel: {upload_err}", exc_info=True)
-                        await message.reply_text(f"❌ Upload error: {str(upload_err)[:300]}")
-                        continue
-
+                    # Forward to user if sent to dump channel
+                    if DUMP_CHANNEL_ID:
+                        await uploaded_msg.copy(message.chat.id, caption=user_caption)
                 finally:
                     # Cleanup temp file
                     if os.path.exists(temp_file):

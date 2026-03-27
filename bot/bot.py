@@ -98,7 +98,7 @@ def format_time(seconds):
         return f"{m}m {s}s"
     return f"{s}s"
 
-async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=10):
+async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=20):
     """Downloads a file fast by using multiple concurrent connections if the server supports range requests."""
     async with aiohttp.ClientSession() as session:
         # Check if the server supports range requests
@@ -409,7 +409,7 @@ async def handle_link(client: Client, message: Message):
                         action_text,
                         start_time,
                         last_update_time,
-                        max_concurrent=10
+                        max_concurrent=20
                     )
 
                     if not success:

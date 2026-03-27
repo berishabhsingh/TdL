@@ -489,7 +489,7 @@ async def handle_link(client: Client, message: Message):
 
 async def main():
     logger.info("Bot started.")
-    
+
     if DUMP_CHANNEL_ID:
         try:
             await app.get_chat(DUMP_CHANNEL_ID)
@@ -500,11 +500,11 @@ async def main():
                 from pyrogram.raw.functions.channels import GetChannels
                 from pyrogram.raw.types import InputChannel
                 import pyrogram.utils
-                
+
                 channel_id = pyrogram.utils.get_channel_id(DUMP_CHANNEL_ID)
                 # For bots that are admins of the channel, access_hash=0 is allowed to fetch channel info
                 await app.invoke(GetChannels(id=[InputChannel(channel_id=channel_id, access_hash=0)]))
-                
+
                 # Fetch again now that Pyrogram has cached the peer from the raw response
                 await app.get_chat(DUMP_CHANNEL_ID)
                 logger.info("Successfully fetched and cached DUMP_CHANNEL_ID using raw API.")

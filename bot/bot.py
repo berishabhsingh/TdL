@@ -98,7 +98,7 @@ def format_time(seconds):
         return f"{m}m {s}s"
     return f"{s}s"
 
-async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=4):
+async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=10):
     """Downloads a file fast by using multiple concurrent connections if the server supports range requests."""
     async with aiohttp.ClientSession() as session:
         # Check if the server supports range requests
@@ -136,13 +136,20 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
                                 break
 
                             async with aiofiles.open(part_file, "ab") as f:
+                                buffer = bytearray()
                                 while True:
-                                    chunk = await chunk_resp.content.read(4 * 1024 * 1024)
+                                    chunk = await chunk_resp.content.read(1024 * 1024)
                                     if not chunk:
+                                        if buffer:
+                                            await f.write(buffer)
                                         break
-                                    await f.write(chunk)
+                                    buffer.extend(chunk)
                                     downloaded[i] += len(chunk)
                                     current_start += len(chunk)
+                                    if len(buffer) >= 4 * 1024 * 1024:
+                                        await f.write(buffer)
+                                        buffer.clear()
+
                                     total_downloaded = sum(downloaded)
                                     await progress_bar(total_downloaded, total_size, status_msg, action_text, start_time, last_update_time)
 
@@ -184,12 +191,18 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
                 total_size = int(resp.headers.get("content-length", 0))
                 downloaded = 0
                 async with aiofiles.open(filepath, "wb") as f:
+                    buffer = bytearray()
                     while True:
-                        chunk = await resp.content.read(4 * 1024 * 1024)
+                        chunk = await resp.content.read(1024 * 1024)
                         if not chunk:
+                            if buffer:
+                                await f.write(buffer)
                             break
-                        await f.write(chunk)
+                        buffer.extend(chunk)
                         downloaded += len(chunk)
+                        if len(buffer) >= 4 * 1024 * 1024:
+                            await f.write(buffer)
+                            buffer.clear()
                         if total_size > 0:
                             await progress_bar(downloaded, total_size, status_msg, action_text, start_time, last_update_time)
                 return True
@@ -396,7 +409,7 @@ async def handle_link(client: Client, message: Message):
                         action_text,
                         start_time,
                         last_update_time,
-                        max_concurrent=4
+                        max_concurrent=10
                     )
 
                     if not success:
@@ -465,9 +478,16 @@ async def handle_link(client: Client, message: Message):
                                     f"👤 By: {user_mention}\n🆔 {user_id_text}")
                     user_caption = f"📄 File: {filename}\n📦 Size: {file_info.get('size', 'Unknown')}"
 
+                    start_time_upload = time.time()
+                    last_update_time_upload = [0]
+                    upload_action_text = f"Uploading: {filename}"
+                    prog_args = (status_msg, upload_action_text, start_time_upload, last_update_time_upload)
+
                     kwargs = {
                         "caption": dump_caption if DUMP_CHANNEL_ID else user_caption,
-                        "file_name": filename
+                        "file_name": filename,
+                        "progress": progress_bar,
+                        "progress_args": prog_args
                     }
 
                     if has_thumb and os.path.exists(temp_thumb):

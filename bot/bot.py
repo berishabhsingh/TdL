@@ -523,6 +523,7 @@ async def handle_link(client: Client, message: Message):
             user_tasks[user_id].remove(current_task)
 
 async def main():
+    await app.start()
     logger.info("Bot started.")
 
     if DUMP_CHANNEL_ID:
@@ -547,6 +548,8 @@ async def main():
                 logger.error(f"Failed to resolve DUMP_CHANNEL_ID via raw API. Ensure the bot is an admin in the channel. Error: {e2}")
 
     await pyrogram.idle()
+    await app.stop()
+    logger.info("Bot stopped.")
 
 if __name__ == "__main__":
     logger.info("Starting bot...")

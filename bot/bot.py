@@ -204,6 +204,12 @@ async def progress_bar(current, total, status_msg, action_text, start_time, last
         pass
 
 
+import pyrogram.utils
+
+# Monkey-patch Pyrogram's hardcoded limits to avoid "Peer id invalid" errors for newer channels
+pyrogram.utils.MIN_CHANNEL_ID = -100999999999999
+pyrogram.utils.MIN_CHAT_ID = -9999999999999
+
 # Initialize bot client
 app = Client(
     "terabox_bot",
@@ -488,6 +494,7 @@ async def handle_link(client: Client, message: Message):
             user_tasks[user_id].remove(current_task)
 
 async def main():
+    await app.start()
     logger.info("Bot started.")
 
     if DUMP_CHANNEL_ID:
@@ -512,6 +519,8 @@ async def main():
                 logger.error(f"Failed to resolve DUMP_CHANNEL_ID via raw API. Ensure the bot is an admin in the channel. Error: {e2}")
 
     await pyrogram.idle()
+    await app.stop()
+    logger.info("Bot stopped.")
 
 if __name__ == "__main__":
     logger.info("Starting bot...")

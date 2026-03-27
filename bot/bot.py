@@ -424,7 +424,7 @@ async def handle_link(client: Client, message: Message):
 
                     # Set up caption for dump channel with user info, and a clean caption for the user
                     user_mention = message.from_user.mention
-                    user_id_text = f"#{message.from_user.id}"
+                    user_id_text = f"#ID{message.from_user.id}"
 
                     dump_caption = (f"📄 File: {filename}\n📦 Size: {file_info.get('size', 'Unknown')}\n"
                                     f"👤 By: {user_mention}\n🆔 {user_id_text}")

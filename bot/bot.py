@@ -203,6 +203,7 @@ async def progress_bar(current, total, status_msg, action_text, start_time, last
     except Exception:
         pass
 
+
 # Initialize bot client
 app = Client(
     "terabox_bot",
@@ -489,19 +490,27 @@ async def handle_link(client: Client, message: Message):
 async def main():
     await app.start()
     logger.info("Bot started.")
-
+    
     if DUMP_CHANNEL_ID:
         try:
             await app.get_chat(DUMP_CHANNEL_ID)
             logger.info(f"Successfully fetched DUMP_CHANNEL_ID ({DUMP_CHANNEL_ID}) chat info.")
         except Exception as e:
-            logger.warning(f"Could not fetch DUMP_CHANNEL_ID ({DUMP_CHANNEL_ID}) directly: {e}. Attempting to populate peers via get_dialogs()...")
+            logger.warning(f"Could not fetch DUMP_CHANNEL_ID ({DUMP_CHANNEL_ID}) directly: {e}. Attempting to resolve via raw API...")
             try:
-                async for dialog in app.get_dialogs():
-                    pass
-                logger.info("Finished fetching dialogs to populate peer cache.")
+                from pyrogram.raw.functions.channels import GetChannels
+                from pyrogram.raw.types import InputChannel
+                import pyrogram.utils
+                
+                channel_id = pyrogram.utils.get_channel_id(DUMP_CHANNEL_ID)
+                # For bots that are admins of the channel, access_hash=0 is allowed to fetch channel info
+                await app.invoke(GetChannels(id=[InputChannel(channel_id=channel_id, access_hash=0)]))
+                
+                # Fetch again now that Pyrogram has cached the peer from the raw response
+                await app.get_chat(DUMP_CHANNEL_ID)
+                logger.info("Successfully fetched and cached DUMP_CHANNEL_ID using raw API.")
             except Exception as e2:
-                logger.error(f"Failed to fetch dialogs: {e2}")
+                logger.error(f"Failed to resolve DUMP_CHANNEL_ID via raw API. Ensure the bot is an admin in the channel. Error: {e2}")
 
     await pyrogram.idle()
     await app.stop()

@@ -118,19 +118,48 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
             downloaded = [0] * max_concurrent
 
             async def download_chunk(i, start, end):
-                chunk_headers = headers.copy()
-                chunk_headers["Range"] = f"bytes={start}-{end}"
-                async with session.get(url, headers=chunk_headers) as chunk_resp:
-                    part_file = f"{filepath}.part{i}"
-                    async with aiofiles.open(part_file, "wb") as f:
-                        while True:
-                            chunk = await chunk_resp.content.read(4 * 1024 * 1024)
-                            if not chunk:
+                current_start = start
+                retries = 5
+                part_file = f"{filepath}.part{i}"
+
+                # Create or truncate the file initially
+                async with aiofiles.open(part_file, "wb") as f:
+                    pass
+
+                while current_start <= end and retries > 0:
+                    try:
+                        chunk_headers = headers.copy()
+                        chunk_headers["Range"] = f"bytes={current_start}-{end}"
+                        async with session.get(url, headers=chunk_headers) as chunk_resp:
+                            if chunk_resp.status not in (200, 206):
+                                logger.error(f"Failed chunk {i} with status {chunk_resp.status}")
                                 break
-                            await f.write(chunk)
-                            downloaded[i] += len(chunk)
-                            total_downloaded = sum(downloaded)
-                            await progress_bar(total_downloaded, total_size, status_msg, action_text, start_time, last_update_time)
+
+                            async with aiofiles.open(part_file, "ab") as f:
+                                while True:
+                                    chunk = await chunk_resp.content.read(4 * 1024 * 1024)
+                                    if not chunk:
+                                        break
+                                    await f.write(chunk)
+                                    downloaded[i] += len(chunk)
+                                    current_start += len(chunk)
+                                    total_downloaded = sum(downloaded)
+                                    await progress_bar(total_downloaded, total_size, status_msg, action_text, start_time, last_update_time)
+
+                        # If we break cleanly and current_start is strictly greater than end, chunk is fully downloaded
+                        if current_start > end:
+                            break
+
+                    except (aiohttp.ClientPayloadError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+                        retries -= 1
+                        logger.warning(f"Chunk {i} interrupted ({e}). Retrying from {current_start}... ({retries} retries left)")
+                        await asyncio.sleep(2)
+                        if retries <= 0:
+                            logger.error(f"Chunk {i} failed after all retries.")
+                            raise e
+                    except Exception as e:
+                        logger.error(f"Unexpected error in chunk {i}: {e}")
+                        raise e
 
             tasks = [download_chunk(i, start, end) for i, (start, end) in enumerate(ranges)]
             await asyncio.gather(*tasks)
@@ -494,7 +523,6 @@ async def handle_link(client: Client, message: Message):
             user_tasks[user_id].remove(current_task)
 
 async def main():
-    await app.start()
     logger.info("Bot started.")
 
     if DUMP_CHANNEL_ID:
@@ -519,8 +547,6 @@ async def main():
                 logger.error(f"Failed to resolve DUMP_CHANNEL_ID via raw API. Ensure the bot is an admin in the channel. Error: {e2}")
 
     await pyrogram.idle()
-    await app.stop()
-    logger.info("Bot stopped.")
 
 if __name__ == "__main__":
     logger.info("Starting bot...")

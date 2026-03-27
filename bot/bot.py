@@ -204,6 +204,12 @@ async def progress_bar(current, total, status_msg, action_text, start_time, last
         pass
 
 
+import pyrogram.utils
+
+# Monkey-patch Pyrogram's hardcoded limits to avoid "Peer id invalid" errors for newer channels
+pyrogram.utils.MIN_CHANNEL_ID = -100999999999999
+pyrogram.utils.MIN_CHAT_ID = -9999999999999
+
 # Initialize bot client
 app = Client(
     "terabox_bot",
@@ -487,6 +493,27 @@ async def handle_link(client: Client, message: Message):
         if current_task in user_tasks[user_id]:
             user_tasks[user_id].remove(current_task)
 
+async def main():
+    await app.start()
+    logger.info("Bot started.")
+
+    if DUMP_CHANNEL_ID:
+        try:
+            await app.get_chat(DUMP_CHANNEL_ID)
+            logger.info(f"Successfully fetched DUMP_CHANNEL_ID ({DUMP_CHANNEL_ID}) chat info.")
+        except Exception as e:
+            logger.warning(f"Could not fetch DUMP_CHANNEL_ID ({DUMP_CHANNEL_ID}) directly: {e}. Attempting to populate peers via get_dialogs()...")
+            try:
+                async for dialog in app.get_dialogs():
+                    pass
+                logger.info("Finished fetching dialogs to populate peer cache.")
+            except Exception as e2:
+                logger.error(f"Failed to fetch dialogs: {e2}")
+
+    await pyrogram.idle()
+    await app.stop()
+    logger.info("Bot stopped.")
+
 if __name__ == "__main__":
     logger.info("Starting bot...")
-    app.run()
+    app.run(main())

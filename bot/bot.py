@@ -432,11 +432,16 @@ async def handle_link(client: Client, message: Message):
                                         # Create a unique temporary directory to avoid race conditions
                                         with tempfile.TemporaryDirectory() as temp_dir:
                                             extracted_path = zip_ref.extract(info_list[0], path=temp_dir)
+                                            # We will use the original filename inside the zip, bypassing any weird '1_' prefixes added by the API
+                                            original_filename = os.path.basename(info_list[0].filename)
                                             shutil.move(extracted_path, temp_file)
-                                            return True
-                                return False
+                                            return original_filename
+                                return None
 
-                            success = await asyncio.to_thread(extract_file)
+                            extracted_filename = await asyncio.to_thread(extract_file)
+                            success = extracted_filename is not None
+                            if success:
+                                filename = extracted_filename
                             if not success:
                                 # Fallback to rename if extraction fails
                                 os.rename(temp_file_dl, temp_file)

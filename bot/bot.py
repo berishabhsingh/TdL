@@ -4,6 +4,12 @@ import logging
 import aiohttp
 import aiofiles
 import pyrogram
+import pyrogram.utils
+
+# Patch for new Telegram channel IDs
+pyrogram.utils.MIN_CHANNEL_ID = -100999999999999
+pyrogram.utils.MIN_CHAT_ID = -9999999999999
+
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
 from pyrogram.errors import FloodWait

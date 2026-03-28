@@ -10,7 +10,7 @@ def get_flowvideo_links(target_url: str):
         # 1. Fetch main page to get tokens
         resp = session.get("https://flowvideoplayer.com/")
         if resp.status_code != 200:
-            return {"error": f"Failed to access flowvideoplayer.com: {resp.status_code}"}
+            return {"error": f"Failed to access cookies: {resp.status_code}"}
 
         html = resp.text
 
@@ -18,7 +18,7 @@ def get_flowvideo_links(target_url: str):
         token_match = re.search(r'let TOKEN = "([^"]+)";', html)
 
         if not csrf_match or not token_match:
-            return {"error": "Failed to extract CSRF or X-Token from flowvideoplayer.com"}
+            return {"error": "Failed to extract CSRF or X-Token from terabox"}
 
         csrf_token = csrf_match.group(1)
         x_token = token_match.group(1)

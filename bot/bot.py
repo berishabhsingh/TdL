@@ -6,7 +6,7 @@ import aiofiles
 import pyrogram
 
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode, ChatType
+from pyrogram.enums import ParseMode, ChatType, ChatAction
 from pyrogram.errors import FloodWait
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from dotenv import load_dotenv
@@ -458,13 +458,11 @@ async def handle_link(client: Client, message: Message):
 
     if is_group:
         try:
-            # First check if we can DM the user by sending a typing action or a silent check
-            # but since we can't easily, we'll try to send a test message and delete it immediately
-            test_msg = await client.send_message(
+            # First check if we can DM the user by sending a silent typing action
+            await client.send_chat_action(
                 chat_id=user_id,
-                text="🔄 Processing your link..."
+                action=ChatAction.TYPING
             )
-            await test_msg.delete()
         except Exception as e:
             bot_username = (await client.get_me()).username
             await message.reply_text(
@@ -476,15 +474,10 @@ async def handle_link(client: Client, message: Message):
                 user_tasks[user_id].remove(current_task)
             return
 
-        try:
-            await message.delete()
-        except Exception as e:
-            logger.warning(f"Could not delete message in group: {e}")
-
-        # Send status message to user's DM instead of the group
+        # Send status message to group instead of the user's DM
         status_msg = await client.send_message(
-            chat_id=user_id,
-            text="🔄 Processing your link...",
+            chat_id=message.chat.id,
+            text=f"🔄 Processing {message.from_user.mention}'s link...",
             disable_web_page_preview=True,
             reply_markup=markup
         )
@@ -737,6 +730,12 @@ async def handle_link(client: Client, message: Message):
                         os.remove(temp_thumb)
 
             await status_msg.delete()
+
+            if is_group:
+                try:
+                    await message.delete()
+                except Exception as e:
+                    logger.warning(f"Could not delete original link message in group: {e}")
 
     except asyncio.CancelledError:
         logger.info(f"Task for user {user_id} was cancelled.")

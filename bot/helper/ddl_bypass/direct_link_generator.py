@@ -1061,6 +1061,7 @@ def tmpsend(url):
 
 
 def terabox(url):
+    import re
     from bot.helper.ddl_bypass.flowapi import get_flowvideo_links
     details = {'contents': [], 'title': '', 'total_size': 0}
 
@@ -1078,13 +1079,33 @@ def terabox(url):
             fname = item.get('file_name') or item.get('filename') or 'Unknown_Filename'
             fsize = item.get('file_size') or item.get('size') or 0
 
+            # Safe conversion of size
+            parsed_size = 0
+            if isinstance(fsize, (int, float)):
+                parsed_size = int(fsize)
+            elif isinstance(fsize, str):
+                fsize = fsize.strip().upper()
+                try:
+                    if fsize.endswith('KB') or fsize.endswith('K'):
+                        parsed_size = int(float(re.sub(r'[A-Z ]', '', fsize)) * 1024)
+                    elif fsize.endswith('MB') or fsize.endswith('M'):
+                        parsed_size = int(float(re.sub(r'[A-Z ]', '', fsize)) * 1024**2)
+                    elif fsize.endswith('GB') or fsize.endswith('G'):
+                        parsed_size = int(float(re.sub(r'[A-Z ]', '', fsize)) * 1024**3)
+                    elif fsize.endswith('TB') or fsize.endswith('T'):
+                        parsed_size = int(float(re.sub(r'[A-Z ]', '', fsize)) * 1024**4)
+                    else:
+                        parsed_size = int(float(re.sub(r'[A-Z ]', '', fsize)))
+                except ValueError:
+                    parsed_size = 0
+
             details['contents'].append({
                 'url': dl_url,
                 'filename': fname,
                 'path': fname,
-                'size': int(fsize)
+                'size': parsed_size
             })
-            details['total_size'] += int(fsize)
+            details['total_size'] += parsed_size
             if not details['title'] and fname != 'Unknown_Filename':
                 details['title'] = fname
 

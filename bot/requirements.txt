@@ -1,8 +1,2 @@
-pyrogram
-tgcrypto
-python-dotenv
-aiofiles
-hachoir
-aiohttp>=3.8,<4
+Flask==3.0.0
 curl_cffi==0.7.1
-motor

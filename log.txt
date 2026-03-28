@@ -1,0 +1,2 @@
+28-Mar-26 12:40:21 PM: [ERROR: __init__.py - 100] ~ BOT_TOKEN variable is missing! Exiting now
+28-Mar-26 12:40:49 PM: [ERROR: __init__.py - 100] ~ BOT_TOKEN variable is missing! Exiting now

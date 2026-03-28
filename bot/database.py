@@ -11,18 +11,27 @@ class Database:
         self.client = None
         self.db = None
         self.users = None
+        self.settings = None
         self.use_memory = True
 
         # In-memory fallback
         # Schema: user_id -> {"is_blocked": bool, "is_approved": bool, "usage_count": int, "last_reset_date": "YYYY-MM-DD"}
         self.memory_db = {}
-        self.daily_limit = 10
+
+        # Default global settings
+        self.default_settings = {
+            "daily_limit": 10,
+            "max_file_size_bytes": 2 * 1024 * 1024 * 1024, # 2 GB
+            "min_file_size_bytes": 0
+        }
+        self.memory_settings = self.default_settings.copy()
 
         if self.mongo_uri:
             try:
                 self.client = AsyncIOMotorClient(self.mongo_uri)
                 self.db = self.client.terabox_bot
                 self.users = self.db.users
+                self.settings = self.db.settings
                 self.use_memory = False
                 logger.info("MongoDB connected successfully.")
             except Exception as e:
@@ -89,6 +98,26 @@ class Database:
         else:
             return await self.users.find().to_list(length=None)
 
+    async def get_settings(self):
+        if self.use_memory:
+            return self.memory_settings
+        else:
+            settings = await self.settings.find_one({"_id": "global_settings"})
+            if not settings:
+                await self.settings.insert_one({"_id": "global_settings", **self.default_settings})
+                return self.default_settings
+            return settings
+
+    async def update_settings(self, key, value):
+        if self.use_memory:
+            self.memory_settings[key] = value
+        else:
+            await self.settings.update_one(
+                {"_id": "global_settings"},
+                {"$set": {key: value}},
+                upsert=True
+            )
+
     async def check_and_update_limit(self, user_id):
         user = await self.get_user(user_id)
         if not user:
@@ -105,7 +134,10 @@ class Database:
             usage_count = 0
             last_reset = today
 
-        if usage_count >= self.daily_limit:
+        settings = await self.get_settings()
+        daily_limit = settings.get("daily_limit", self.default_settings["daily_limit"])
+
+        if usage_count >= daily_limit:
             return False
 
         usage_count += 1
@@ -120,5 +152,25 @@ class Database:
             )
 
         return True
+
+    async def check_file_size_limit(self, user_id, size_in_bytes):
+        user = await self.get_user(user_id)
+        if not user:
+            user = await self.add_user(user_id)
+
+        if user.get("is_approved"):
+            return True, ""
+
+        settings = await self.get_settings()
+        max_size = settings.get("max_file_size_bytes", self.default_settings["max_file_size_bytes"])
+        min_size = settings.get("min_file_size_bytes", self.default_settings["min_file_size_bytes"])
+
+        if size_in_bytes > max_size:
+            return False, f"exceeds maximum allowed size of {max_size / (1024*1024):.0f} MB"
+
+        if size_in_bytes < min_size:
+            return False, f"is smaller than minimum allowed size of {min_size / (1024*1024):.0f} MB"
+
+        return True, ""
 
 db = Database()

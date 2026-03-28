@@ -349,6 +349,54 @@ async def broadcast_command(client: Client, message: Message):
 
     await message.reply_text(f"Broadcast completed.\nSent: {sent}\nFailed: {failed}")
 
+@app.on_message(filters.command("setmax") & filters.user(OWNER_ID) if OWNER_ID else filters.command("setmax") & filters.user([]))
+async def setmax_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /setmax <size_in_MB>")
+    try:
+        max_mb = float(message.command[1])
+        await db.update_settings("max_file_size_bytes", max_mb * 1024 * 1024)
+        await message.reply_text(f"Max file size set to {max_mb:.2f} MB.")
+    except ValueError:
+        await message.reply_text("Invalid size value.")
+
+@app.on_message(filters.command("setmin") & filters.user(OWNER_ID) if OWNER_ID else filters.command("setmin") & filters.user([]))
+async def setmin_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /setmin <size_in_MB>")
+    try:
+        min_mb = float(message.command[1])
+        await db.update_settings("min_file_size_bytes", min_mb * 1024 * 1024)
+        await message.reply_text(f"Min file size set to {min_mb:.2f} MB.")
+    except ValueError:
+        await message.reply_text("Invalid size value.")
+
+@app.on_message(filters.command("setlimit") & filters.user(OWNER_ID) if OWNER_ID else filters.command("setlimit") & filters.user([]))
+async def setlimit_command(client: Client, message: Message):
+    if len(message.command) < 2:
+        return await message.reply_text("Usage: /setlimit <number_of_links>")
+    try:
+        limit = int(message.command[1])
+        await db.update_settings("daily_limit", limit)
+        await message.reply_text(f"Daily download limit set to {limit} links.")
+    except ValueError:
+        await message.reply_text("Invalid limit value.")
+
+@app.on_message(filters.command("settings") & filters.user(OWNER_ID) if OWNER_ID else filters.command("settings") & filters.user([]))
+async def settings_command(client: Client, message: Message):
+    settings = await db.get_settings()
+    max_mb = settings.get("max_file_size_bytes", db.default_settings["max_file_size_bytes"]) / (1024 * 1024)
+    min_mb = settings.get("min_file_size_bytes", db.default_settings["min_file_size_bytes"]) / (1024 * 1024)
+    limit = settings.get("daily_limit", db.default_settings["daily_limit"])
+
+    text = (
+        "⚙️ **Current Global Settings:**\n\n"
+        f"**Daily Limit:** `{limit}` links\n"
+        f"**Max File Size:** `{max_mb:.2f}` MB\n"
+        f"**Min File Size:** `{min_mb:.2f}` MB"
+    )
+    await message.reply_text(text)
+
 @app.on_message(filters.command("cancel"))
 async def cancel_command(client: Client, message: Message):
     user_id = message.from_user.id
@@ -450,6 +498,33 @@ async def handle_link(client: Client, message: Message):
                     await message.reply_text(
                         f"❌ <b>Could not extract the download link for:</b> {file_info.get('filename', 'Unknown')}\n"
                         "<i>The link may be password-protected, geo-blocked, or the configured cookies have expired.</i>",
+                        parse_mode=ParseMode.HTML
+                    )
+                    continue
+
+                # Parse file size to bytes for limit checking
+                size_str = str(file_info.get("size", "0")).upper().strip()
+                size_in_bytes = 0
+                try:
+                    if "GB" in size_str:
+                        size_in_bytes = float(size_str.replace("GB", "").strip()) * 1024 * 1024 * 1024
+                    elif "MB" in size_str:
+                        size_in_bytes = float(size_str.replace("MB", "").strip()) * 1024 * 1024
+                    elif "KB" in size_str:
+                        size_in_bytes = float(size_str.replace("KB", "").strip()) * 1024
+                    elif "B" in size_str:
+                        size_in_bytes = float(size_str.replace("B", "").strip())
+                    else:
+                        size_in_bytes = float(size_str)
+                except ValueError:
+                    size_in_bytes = 0
+
+                size_allowed, reason = await db.check_file_size_limit(user_id, int(size_in_bytes))
+                if not size_allowed:
+                    await message.reply_text(
+                        f"❌ <b>Limit Exceeded:</b> {file_info.get('filename', 'Unknown')}\n"
+                        f"<i>Size ({size_str}) {reason}.</i>\n"
+                        "Ask the bot owner to approve you to remove this limit.",
                         parse_mode=ParseMode.HTML
                     )
                     continue

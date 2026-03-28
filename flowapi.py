@@ -56,6 +56,14 @@ def get_flowvideo_links(target_url: str):
                  return {"error": f"API returned status {api_resp.status_code}"}
 
             data = api_resp.json()
+
+            # Retry if bot detection triggers but returns HTTP 200
+            if data.get("code") == 201 or data.get("message") == "Bot detected":
+                if attempt < 2:
+                    time.sleep(random.uniform(0.5, 1.5))
+                    continue
+                return {"error": "Failed to access flowvideoplayer.com: Bot detected"}
+
             return data
 
         except Exception as e:

@@ -6,7 +6,7 @@ import aiofiles
 import pyrogram
 
 from pyrogram import Client, filters
-from pyrogram.enums import ParseMode
+from pyrogram.enums import ParseMode, ChatType
 from pyrogram.errors import FloodWait
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from dotenv import load_dotenv
@@ -453,7 +453,48 @@ async def handle_link(client: Client, message: Message):
     markup = InlineKeyboardMarkup(
         [[InlineKeyboardButton("🛑 Cancel", callback_data="cancel_tasks")]]
     )
-    status_msg = await message.reply_text("🔄 Processing your link...", disable_web_page_preview=True, reply_markup=markup)
+
+    is_group = message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]
+
+    if is_group:
+        try:
+            # First check if we can DM the user by sending a typing action or a silent check
+            # but since we can't easily, we'll try to send a test message and delete it immediately
+            test_msg = await client.send_message(
+                chat_id=user_id,
+                text="🔄 Processing your link..."
+            )
+            await test_msg.delete()
+        except Exception as e:
+            bot_username = (await client.get_me()).username
+            await message.reply_text(
+                f"❌ Please start me in DM first to process your link: [Start Bot](https://t.me/{bot_username}?start=1)",
+                disable_web_page_preview=True,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            if current_task in user_tasks[user_id]:
+                user_tasks[user_id].remove(current_task)
+            return
+
+        try:
+            await message.delete()
+        except Exception as e:
+            logger.warning(f"Could not delete message in group: {e}")
+
+        # Send status message to user's DM instead of the group
+        status_msg = await client.send_message(
+            chat_id=user_id,
+            text="🔄 Processing your link...",
+            disable_web_page_preview=True,
+            reply_markup=markup
+        )
+    else:
+        # If it's a DM, reply directly
+        status_msg = await message.reply_text(
+            "🔄 Processing your link...",
+            disable_web_page_preview=True,
+            reply_markup=markup
+        )
 
     try:
         async with semaphore:
@@ -665,7 +706,7 @@ async def handle_link(client: Client, message: Message):
                         kwargs["thumb"] = temp_thumb
 
                     # Upload to dump channel first if configured
-                    target_chat = DUMP_CHANNEL_ID if DUMP_CHANNEL_ID else message.chat.id
+                    target_chat = DUMP_CHANNEL_ID if DUMP_CHANNEL_ID else user_id
 
                     if ext in ['mp4', 'mkv', 'avi', 'mov', 'webm']:
                         duration = get_video_duration(temp_file)
@@ -685,7 +726,7 @@ async def handle_link(client: Client, message: Message):
 
                     # Forward to user if sent to dump channel
                     if DUMP_CHANNEL_ID:
-                        await uploaded_msg.copy(message.chat.id, caption=user_caption)
+                        await uploaded_msg.copy(user_id, caption=user_caption)
                 finally:
                     # Cleanup temp file
                     if os.path.exists(temp_file):

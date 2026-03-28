@@ -5,10 +5,17 @@ import json
 
 def get_flowvideo_links(target_url: str):
     try:
-        session = requests.Session(impersonate="chrome120")
+        session = requests.Session(impersonate="safari15_5")
 
         # 1. Fetch main page to get tokens
-        resp = session.get("https://flowvideoplayer.com/")
+        headers_get = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1"
+        }
+        resp = session.get("https://flowvideoplayer.com/", headers=headers_get)
         if resp.status_code != 200:
             return {"error": f"Failed to access flowvideoplayer.com: {resp.status_code}"}
 

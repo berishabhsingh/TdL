@@ -1,62 +1,112 @@
-# TeraBox API & Telegram Bot
+# LeechxTool
 
-This repository contains tools for interacting with TeraBox share links. It has been separated into two independent projects for easier hosting, alongside a standalone script for manual local usage.
+A powerful Telegram bot to mirror and leech files from various sources to Telegram, Google Drive, and Rclone supported cloud storages.
 
-## Repository Structure
+## Features
 
-- `api/`: The Flask API designed to be hosted on Vercel. It provides endpoints for resolving TeraBox file links.
-- `bot/`: The Telegram bot designed to be hosted on Railway. It uses pyrogram to automatically download and send files from TeraBox links sent in chat.
-- `dl.py`: A standalone Python script you can run locally to manually download or fetch direct links from a TeraBox share URL using your own cookie.
+- **Mirroring**: Download from direct links, Torrents, YouTube, Mega, Google Drive, and more to Google Drive or Rclone.
+- **Leeching**: Upload downloaded files directly to Telegram.
+- **Clone**: Clone files between Google Drive, Rclone, and other supported cloud storages.
+- **Yt-Dlp Support**: Download videos from YouTube and supported sites with custom quality selection.
+- **JDownloader Support**: Download files using JDownloader.
+- **Torrents**: Support for public and private trackers, magnet links, and torrent files.
+- **Search**: Built-in torrent search feature.
+- **RSS Feed**: Automated downloading via RSS feeds.
+- **User Management**: Authorize specific users or chats.
+- **Bot Management**: Extensive control over bot settings via commands.
 
----
+## Deployment
 
-## 1. API (Vercel)
+### Docker (Recommended)
 
-The API extracts file information from TeraBox share links.
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/YourUsername/LeechxTool.git
+    cd LeechxTool
+    ```
 
-**Deployment:**
-1. Navigate to the `api/` directory.
-2. Deploy directly to Vercel using the provided `vercel.json`.
-3. Make sure to set up your environment variables (like `COOKIE_JSON`) in the Vercel dashboard.
+2.  **Build the Docker image:**
+    ```bash
+    docker build -t leechxtool .
+    ```
 
-**Local Usage:**
-```bash
-cd api
-pip install -r requirements.txt
-python main.py
-```
+3.  **Run the container:**
+    ```bash
+    docker run -d \
+      -e BOT_TOKEN="your_bot_token" \
+      -e OWNER_ID="your_owner_id" \
+      -e TELEGRAM_API="your_api_id" \
+      -e TELEGRAM_HASH="your_api_hash" \
+      -v $(pwd)/config.env:/usr/src/app/config.env \
+      -v $(pwd)/accounts:/usr/src/app/accounts \
+      leechxtool
+    ```
 
----
+### VPS / Local Machine
 
-## 2. Telegram Bot (Railway)
+1.  **Install Dependencies:**
+    -   Python 3.9+
+    -   FFmpeg
+    -   Aria2
+    -   qBittorrent-nox
+    -   7-Zip
 
-A Telegram bot that acts as a TeraBox downloader.
+2.  **Install Python Packages:**
+    ```bash
+    pip3 install -r requirements.txt
+    ```
 
-**Deployment:**
-1. Navigate to the `bot/` directory.
-2. Deploy to Railway or a similar service.
-3. Set your environment variables (`BOT_TOKEN`, `BOT_API_ID`, `BOT_API_HASH`, `API_URL`) in your hosting provider's dashboard.
-   - `API_URL`: The URL of your deployed Vercel API (e.g., `https://td-l.vercel.app/api2`). If you don't set this, it will default to a placeholder.
-   - Note: The bot no longer requires a `COOKIE_JSON`.
+3.  **Configure:**
+    -   Copy `config.env.sample` (if available) to `config.env` and fill in the values.
+    -   Or simply create a `config.env` file.
 
-**Local Usage:**
-```bash
-cd bot
-pip install -r requirements.txt
-python bot.py
-```
+4.  **Run:**
+    ```bash
+    bash start.sh
+    ```
 
----
+## Configuration (`config.env`)
 
-## 3. Standalone Script (`dl.py`)
+| Variable | Description |
+| :--- | :--- |
+| `BOT_TOKEN` | Your Telegram Bot Token. |
+| `OWNER_ID` | Your Telegram User ID. |
+| `TELEGRAM_API` | Your Telegram API ID. |
+| `TELEGRAM_HASH` | Your Telegram API Hash. |
+| `DATABASE_URL` | MongoDB Connection String. |
+| `DOWNLOAD_DIR` | Directory for downloads (default: `/usr/src/app/downloads/`). |
+| `GDRIVE_ID` | Google Drive Folder ID for uploads. |
+| `RCLONE_PATH` | Rclone remote path (e.g., `remote:path`). |
+| `DEFAULT_UPLOAD` | `gd` (Google Drive) or `rc` (Rclone). |
+| `UPSTREAM_REPO` | Git URL for bot updates. |
+| `FSUB_CHANNEL_ID` | Channel ID for forced subscription. |
 
-A single-file script that allows you to manually fetch direct download links for any TeraBox URL. It requires no external dependencies other than `aiohttp`.
+*See `config.env` for the full list of optional configurations.*
 
-**Usage:**
-```bash
-python3 dl.py "https://1024terabox.com/s/1_8lO2hqOmptouVBSn8tJcg" -c "YOUR_NDUS_COOKIE_HERE"
-```
+## Commands
 
-**Options:**
-- `-c, --cookie`: **Required.** Your TeraBox `ndus` cookie value.
-- `-p, --password`: Optional. The password if the link is protected.
+| Command | Description |
+| :--- | :--- |
+| `/start` | Start the bot. |
+| `/mirror`, `/m` | Mirror file/link to Cloud. |
+| `/leech`, `/l` | Leech file/link to Telegram. |
+| `/ytdl`, `/y` | Download via Yt-Dlp to Cloud. |
+| `/ytdlleech`, `/yl` | Download via Yt-Dlp to Telegram. |
+| `/clone` | Clone Google Drive/Rclone files. |
+| `/status` | Show status of current tasks. |
+| `/cancel` | Cancel a task. |
+| `/list` | Search files in Drive/Rclone. |
+| `/search` | Search torrents. |
+| `/authorize` | Authorize a chat or user. |
+| `/unauthorize` | Revoke authorization. |
+| `/users` | List authorized users. |
+| `/log` | Get log file. |
+| `/stats` | Show system and bot stats. |
+| `/restart` | Restart the bot. |
+| `/help` | Show help message. |
+
+*Add your `CMD_SUFFIX` (if set) to these commands.*
+
+## Credits
+
+-   Based on various open-source leech bots.

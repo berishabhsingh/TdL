@@ -1,4 +1,3 @@
-version: "3.3"
 services:
   #gluetun:
     #image: qmcgaw/gluetun:v3.34

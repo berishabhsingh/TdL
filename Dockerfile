@@ -1,4 +1,19 @@
-FROM silentdemonsd/wzmlx:hk
+FROM python:3.12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    curl \
+    git \
+    ffmpeg \
+    aria2 \
+    qbittorrent-nox \
+    p7zip-full \
+    unzip \
+    wget \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app
 RUN chmod 777 /usr/src/app

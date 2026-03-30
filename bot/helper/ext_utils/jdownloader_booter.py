@@ -5,7 +5,7 @@ from random import randint
 from re import search as re_search, I
 from time import sleep
 
-from bot import bot, config_dict, jd_lock, LOGGER, FFMPEG_NAME
+from bot import bot, config_dict, jd_lock, LOGGER, FFMPEG_NAME, FFPROBE_NAME
 from bot.helper.ext_utils.bot_utils import cmd_exec, new_task, sync_to_async
 from myjd import Myjdapi
 from myjd.exception import MYJDException, MYJDAuthFailedException, MYJDEmailForbiddenException, MYJDEmailInvalidException, MYJDErrorEmailNotConfirmedException
@@ -45,7 +45,7 @@ class JDownloader(Myjdapi):
                  'password': config_dict['JD_PASS'],
                  'devicename': self._device_name,
                  'email': config_dict['JD_EMAIL']}
-        ffdata = {'binarypath': f'/usr/bin/{FFMPEG_NAME}', 'binarypathprobe': '/usr/bin/ffprobe'}
+        ffdata = {'binarypath': f'/usr/bin/{FFMPEG_NAME}', 'binarypathprobe': f'/usr/bin/{FFPROBE_NAME}'}
         jdsetpath = '/JDownloader/cfg/org.jdownloader.api.myjdownloader.MyJDownloaderSettings.json'
         jdffpath = '/JDownloader/cfg/org.jdownloader.controlling.ffmpeg.FFmpegSetup.json'
         with open(jdsetpath, 'w') as sf, open(jdffpath, 'w') as ff:

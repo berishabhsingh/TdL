@@ -17,7 +17,7 @@ google-auth-oauthlib
 gunicorn
 httpx
 html-telegraph-poster
-lxml
+lxml[html_clean]
 mega
 motor
 natsort

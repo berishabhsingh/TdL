@@ -16,7 +16,7 @@ from time import time
 from uuid import uuid4
 
 from psutil import boot_time, cpu_count, cpu_freq, cpu_percent, disk_usage, swap_memory, virtual_memory, net_io_counters
-from bot import bot, bot_loop, bot_dict, bot_lock, bot_name, botStartTime, Intervals, user_data, config_dict, scheduler, LOGGER, DATABASE_URL, INCOMPLETE_TASK_NOTIFIER, ARIA_NAME, QBIT_NAME, FFMPEG_NAME
+from bot import bot, bot_loop, bot_dict, bot_lock, bot_name, botStartTime, Intervals, user_data, config_dict, scheduler, LOGGER, DATABASE_URL, INCOMPLETE_TASK_NOTIFIER, ARIA_NAME, QBIT_NAME, FFMPEG_NAME, FFPROBE_NAME
 from bot.helper.ext_utils.argo_tunnel import ping_base_route, kill_route
 from bot.helper.ext_utils.bot_utils import cmd_exec, sync_to_async, new_task, update_user_ldata
 from bot.helper.ext_utils.conf_loads import intialize_userbot, intialize_savebot
@@ -37,7 +37,7 @@ from bot.helper.telegram_helper.button_build import ButtonMaker
 from bot.helper.telegram_helper.filters import CustomFilters
 from bot.helper.telegram_helper.message_utils import limit, sendMessage, editMessage, sendFile, auto_delete_message, sendingMessage, deleteMessage, editMarkup, editPhoto, sendCustom, editCustom, copyMessage
 from bot.modules import (authorize, bot_settings, clone, eval_exec, gd_count, gd_delete, multi_search, cancel_task, mirror_leech, speed_test, status, torrent_search, torrent_select, fast_download, resume_task,
-                         user_settings, ytdlp, shell, rss, wayback, hash, bypass, scrapper, purge, broadcast, info, misc_tools, backup, join_chat, video_tools, media_info, ddls, save_message)
+                         user_settings, ytdlp, shell, rss, wayback, hash, bypass, scrapper, purge, broadcast, misc_tools, backup, join_chat, video_tools, media_info, ddls, save_message)
 
 
 @new_task
@@ -189,7 +189,7 @@ async def restart(_, message: Message):
             for intvl in list(st.values()):
                 intvl.cancel()
         await gather(sync_to_async(clean_all), server.cleanup())
-        proc1 = await create_subprocess_exec('pkill', '-9', '-f', f'gunicorn|{ARIA_NAME}|{QBIT_NAME}|{FFMPEG_NAME}|wzone|java|alass')
+        proc1 = await create_subprocess_exec('pkill', '-9', '-f', f'gunicorn|{ARIA_NAME}|{QBIT_NAME}|{FFMPEG_NAME}|{FFPROBE_NAME}|wzone|java|alass')
         proc2 = await create_subprocess_exec('python3', 'update.py')
         await gather(proc1.wait(), proc2.wait())
         async with aiopen('.restartmsg', 'w') as f:

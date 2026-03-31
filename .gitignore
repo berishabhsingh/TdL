@@ -1,3 +1,16 @@
 __pycache__/
 *.pyc
-.vercel/
+config.env
+log.txt
+rlog.txt
+venv/
+.idea/
+.vscode/
+.DS_Store
+*.log
+*.zip
+*.7z
+accounts/
+tokens/
+rclone/
+cookies.txt

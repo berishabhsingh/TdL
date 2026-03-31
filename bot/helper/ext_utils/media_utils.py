@@ -9,7 +9,7 @@ from pyrogram.types import Message
 from re import search as re_search, findall as re_findall, split as re_split
 from time import time
 
-from bot import config_dict, subprocess_lock, LOGGER, DEFAULT_SPLIT_SIZE, FFMPEG_NAME
+from bot import config_dict, subprocess_lock, LOGGER, DEFAULT_SPLIT_SIZE, FFMPEG_NAME, FFPROBE_NAME
 from bot.helper.ext_utils.bot_utils import cmd_exec, sync_to_async, is_premium_user
 from bot.helper.ext_utils.files_utils import ARCH_EXT, get_mime_type, get_path_size, clean_target
 from bot.helper.ext_utils.links_utils import get_url_name
@@ -44,7 +44,7 @@ async def createThumb(msg: Message, _id: int=0):
 
 async def is_multi_streams(path):
     try:
-        result = await cmd_exec(['ffprobe', '-hide_banner', '-loglevel', 'error', '-print_format', 'json', '-show_streams', path])
+        result = await cmd_exec([FFPROBE_NAME, '-hide_banner', '-loglevel', 'error', '-print_format', 'json', '-show_streams', path])
         if res := result[1]:
             LOGGER.warning('Get Video Streams: %s', res)
     except Exception as e:
@@ -65,7 +65,7 @@ async def is_multi_streams(path):
 
 async def get_media_info(path):
     try:
-        result = await cmd_exec(['ffprobe', '-hide_banner', '-loglevel', 'error', '-print_format', 'json', '-show_format', path])
+        result = await cmd_exec([FFPROBE_NAME, '-hide_banner', '-loglevel', 'error', '-print_format', 'json', '-show_format', path])
         if res := result[1]:
             LOGGER.warning('Get Media Info: %s', res)
     except Exception as e:
@@ -117,7 +117,7 @@ async def get_document_type(path):
     if not mime_type.startswith('video') and not mime_type.endswith('octet-stream'):
         return is_video, is_audio, is_image
     try:
-        result = await cmd_exec(['ffprobe', '-hide_banner', '-loglevel', 'error', '-print_format', 'json', '-show_streams', path])
+        result = await cmd_exec([FFPROBE_NAME, '-hide_banner', '-loglevel', 'error', '-print_format', 'json', '-show_streams', path])
         if res := result[1]:
             LOGGER.warning('Get Document Type: %s', res)
     except Exception as e:

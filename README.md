@@ -1,6 +1,31 @@
-# LeechxTool
+# LeechxTool - The Ultimate Telegram Bot for Downloading & Uploading
 
-A powerful Telegram bot to mirror and leech files from various sources to Telegram, Google Drive, and Rclone supported cloud storages.
+Hello! Welcome to LeechxTool.
+
+If you're wondering how this code actually works, here's a super simple explanation, designed so that even a **class 6 boy** can understand what's happening under the hood!
+
+## How the Code Works (A Simple Story)
+
+Imagine you are a busy manager (that's the `Telegram Bot`) working in an office. You have a few specialist workers helping you out:
+1. **The Downloader (Aria2 & qBittorrent):** These guys are experts at downloading files from the internet fast.
+2. **The Video Guy (Yt-Dlp & FFmpeg):** This guy loves watching videos. You give him a YouTube link, and he brings the video file to your desk.
+3. **The Web Assistant (Flask):** This person handles web pages, like a simple website you might visit.
+4. **The Memory Bank (MongoDB):** This is your giant filing cabinet where you store all your settings.
+
+### Step-by-Step Breakdown: `bot/__init__.py` (The Manager's Morning Routine)
+When we type `bash start.sh` to start the bot, the very first major file that runs is `bot/__init__.py`. Here is exactly what happens when that file runs:
+
+1. **Waking Up (Imports):** The bot brings in all the tools it needs to work (like `sleep`, `time`, and `os`).
+2. **Reading the To-Do List (Environment Variables):** The bot reads a secret file called `config.env` using `load_dotenv`. This file has your secrets like `BOT_TOKEN` (the manager's ID badge) and `DATABASE_URL` (the key to the filing cabinet).
+3. **Checking the Filing Cabinet (MongoDB):** The bot connects to the MongoDB database to see if you saved any custom settings previously. If it finds settings, it loads them up.
+4. **Starting the Web Assistant:** It runs a web server using `gunicorn` so you can use certain website features.
+5. **Waking up the Downloaders:** The bot starts `qbittorrent-nox` (for torrents) and `aria2` (for direct downloads). It even fetches a list of "trackers" from the internet to make torrent downloads faster!
+6. **Logging In to Telegram (Pyrogram):** Finally, it uses a library called `Pyrofork` (a version of Pyrogram) to log in to Telegram. It says: "Hello Telegram! I am ready to receive messages!"
+7. **Listening for Messages:** From this point on, the bot sits quietly, waiting for you to type commands like `/mirror` or `/leech`.
+
+When you type a command, the Manager (Bot) gives the task to the right specialist (Downloader or Video Guy), and when they finish, the Manager uploads the file to Google Drive or sends it back to you on Telegram!
+
+---
 
 ## Features
 
@@ -19,6 +44,8 @@ A powerful Telegram bot to mirror and leech files from various sources to Telegr
 ## Deployment
 
 ### Docker (Recommended)
+
+We are now using a standard `python:3.12-slim` image, so everything is fully customizable!
 
 1.  **Clone the repository:**
     ```bash
@@ -40,26 +67,28 @@ A powerful Telegram bot to mirror and leech files from various sources to Telegr
       -e TELEGRAM_HASH="your_api_hash" \
       -v $(pwd)/config.env:/usr/src/app/config.env \
       -v $(pwd)/accounts:/usr/src/app/accounts \
+      -p 80:80 \
+      -p 8080:8080 \
       leechxtool
     ```
 
 ### VPS / Local Machine
 
-1.  **Install Dependencies:**
-    -   Python 3.9+
+1.  **Install System Dependencies:**
+    -   Python 3.12+
     -   FFmpeg
     -   Aria2
     -   qBittorrent-nox
-    -   7-Zip
+    -   p7zip-full
+    -   curl, wget, git, build-essential
 
 2.  **Install Python Packages:**
     ```bash
-    pip3 install -r requirements.txt
+    pip install -r requirements.txt
     ```
 
 3.  **Configure:**
-    -   Copy `config.env.sample` (if available) to `config.env` and fill in the values.
-    -   Or simply create a `config.env` file.
+    -   Create a `config.env` file in the root directory and fill in the values below.
 
 4.  **Run:**
     ```bash
@@ -82,7 +111,7 @@ A powerful Telegram bot to mirror and leech files from various sources to Telegr
 | `UPSTREAM_REPO` | Git URL for bot updates. |
 | `FSUB_CHANNEL_ID` | Channel ID for forced subscription. |
 
-*See `config.env` for the full list of optional configurations.*
+*See `bot/__init__.py` for the full list of optional configurations.*
 
 ## Commands
 

@@ -4,7 +4,8 @@ from flask import Flask, request
 from logging import INFO, FileHandler, StreamHandler, basicConfig, getLogger
 from os import path
 from psutil import boot_time, disk_usage, net_io_counters
-from qbittorrentapi import Client as qbClient, NotFound404Error
+from qbittorrentapi import Client as qbClient
+from qbittorrentapi.exceptions import NotFound404Error
 from subprocess import check_output
 from time import sleep, time
 from web.nodes import make_tree

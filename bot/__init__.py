@@ -91,9 +91,10 @@ VID_MODE = {'vid_vid': 'Video + Video',
             'rmstream': 'Remove Stream'}
 
 DEFAULT_SPLIT_SIZE = 2097151000
-ARIA_NAME = environ.get('ARIA_NAME', 'wz2c')
-QBIT_NAME = environ.get('QBIT_NAME', 'wznox')
-FFMPEG_NAME = environ.get('FFMPEG_NAME', 'wzeg')
+ARIA_NAME = environ.get('ARIA_NAME', 'aria2c')
+QBIT_NAME = environ.get('QBIT_NAME', 'qbittorrent-nox')
+FFMPEG_NAME = environ.get('FFMPEG_NAME', 'ffmpeg')
+FFPROBE_NAME = environ.get('FFPROBE_NAME', 'ffprobe')
 
 # ============================ REQUIRED ================================
 if not (BOT_TOKEN := environ.get('BOT_TOKEN', '')):
@@ -360,7 +361,8 @@ AUTO_MUTE_DURATION = int(environ.get('AUTO_MUTE_DURATION', 30))
 FUSERNAME = environ.get('FUSERNAME', 'False').lower() == 'true'
 # Subscribe
 FSUB = environ.get('FSUB', 'False').lower() == 'true'
-FSUB_CHANNEL_ID = int(environ.get('FSUB_CHANNEL_ID', ))
+FSUB_CHANNEL_ID = environ.get('FSUB_CHANNEL_ID', '')
+FSUB_CHANNEL_ID = int(FSUB_CHANNEL_ID) if FSUB_CHANNEL_ID else ''
 FSUB_BUTTON_NAME = environ.get('FSUB_BUTTON_NAME', 'Join Channel')
 CHANNEL_USERNAME = environ.get('CHANNEL_USERNAME', 'PubleechGroup')
 # ======================================================================

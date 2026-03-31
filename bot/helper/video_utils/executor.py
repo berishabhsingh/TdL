@@ -9,7 +9,7 @@ from natsort import natsorted
 from os import path as ospath, walk
 from time import time
 
-from bot import config_dict, task_dict, task_dict_lock, queue_dict_lock, non_queued_dl, LOGGER, VID_MODE, FFMPEG_NAME
+from bot import config_dict, task_dict, task_dict_lock, queue_dict_lock, non_queued_dl, LOGGER, VID_MODE, FFMPEG_NAME, FFPROBE_NAME
 from bot.helper.ext_utils.bot_utils import sync_to_async, cmd_exec, new_task
 from bot.helper.ext_utils.files_utils import get_path_size, clean_target
 from bot.helper.ext_utils.links_utils import get_url_name
@@ -23,7 +23,7 @@ from bot.helper.video_utils.extra_selector import ExtraSelect
 
 
 async def get_metavideo(video_file):
-    stdout, stderr, rcode = await cmd_exec(['ffprobe', '-hide_banner', '-print_format', 'json', '-show_format', '-show_streams', video_file])
+    stdout, stderr, rcode = await cmd_exec([FFPROBE_NAME, '-hide_banner', '-print_format', 'json', '-show_format', '-show_streams', video_file])
     if rcode != 0:
         LOGGER.error(stderr)
         return {}, {}

@@ -194,7 +194,7 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
                     part_file = f"{filepath}.part{i}"
                     async with aiofiles.open(part_file, "rb") as infile:
                         while True:
-                            chunk = await infile.read(10 * 1024 * 1024)
+                            chunk = await infile.read(1024 * 1024)
                             if not chunk:
                                 break
                             await outfile.write(chunk)

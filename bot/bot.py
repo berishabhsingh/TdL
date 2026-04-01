@@ -54,7 +54,7 @@ if DUMP_CHANNEL_ID:
         pass
 
 # Concurrency control for downloads/uploads (max concurrent operations)
-MAX_CONCURRENT_TASKS = 10
+MAX_CONCURRENT_TASKS = 20
 semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
 
 # Track running tasks by user_id for cancellation
@@ -111,7 +111,7 @@ def format_time(seconds):
         return f"{m}m {s}s"
     return f"{s}s"
 
-async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=10):
+async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=20):
     """Downloads a file fast by using multiple concurrent connections if the server supports range requests."""
     async with aiohttp.ClientSession() as session:
         # Check if the server supports range requests
@@ -149,13 +149,21 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
                                 break
 
                             async with aiofiles.open(part_file, "ab") as f:
+                                buffer = bytearray()
                                 while True:
                                     chunk = await chunk_resp.content.read(1024 * 1024)
                                     if not chunk:
+                                        if buffer:
+                                            await f.write(buffer)
                                         break
-                                    await f.write(chunk)
+                                    buffer.extend(chunk)
                                     downloaded[i] += len(chunk)
                                     current_start += len(chunk)
+
+                                    # Buffer up to 2MB to prevent RAM exhaustion and too many disk writes
+                                    if len(buffer) >= 2 * 1024 * 1024:
+                                        await f.write(buffer)
+                                        buffer.clear()
 
                                     total_downloaded = sum(downloaded)
                                     await progress_bar(total_downloaded, total_size, status_msg, action_text, start_time, last_update_time)
@@ -184,7 +192,7 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
                     part_file = f"{filepath}.part{i}"
                     async with aiofiles.open(part_file, "rb") as infile:
                         while True:
-                            chunk = await infile.read(1024 * 1024)
+                            chunk = await infile.read(10 * 1024 * 1024)
                             if not chunk:
                                 break
                             await outfile.write(chunk)
@@ -198,12 +206,20 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
                 total_size = int(resp.headers.get("content-length", 0))
                 downloaded = 0
                 async with aiofiles.open(filepath, "wb") as f:
+                    buffer = bytearray()
                     while True:
                         chunk = await resp.content.read(1024 * 1024)
                         if not chunk:
+                            if buffer:
+                                await f.write(buffer)
                             break
-                        await f.write(chunk)
+                        buffer.extend(chunk)
                         downloaded += len(chunk)
+
+                        if len(buffer) >= 2 * 1024 * 1024:
+                            await f.write(buffer)
+                            buffer.clear()
+
                         if total_size > 0:
                             await progress_bar(downloaded, total_size, status_msg, action_text, start_time, last_update_time)
                 return True
@@ -611,7 +627,7 @@ async def handle_link(client: Client, message: Message):
                         action_text,
                         start_time,
                         last_update_time,
-                        max_concurrent=10
+                        max_concurrent=20
                     )
 
                     if not success:
@@ -744,13 +760,16 @@ async def handle_link(client: Client, message: Message):
                 f"⏱ **Time Taken:** {format_time(total_time_taken)}"
             )
 
-            # Edit status message to show stats, wait 5s, then delete
+            # Delete the status update message and send the stats message to chat
+            await status_msg.delete()
             if is_group:
-                await status_msg.edit_text(stats_msg, parse_mode=ParseMode.MARKDOWN)
-                await asyncio.sleep(5)
-                await status_msg.delete()
+                await client.send_message(
+                    chat_id=message.chat.id,
+                    text=stats_msg,
+                    parse_mode=ParseMode.MARKDOWN
+                )
             else:
-                await status_msg.edit_text(stats_msg, parse_mode=ParseMode.MARKDOWN)
+                await message.reply_text(stats_msg, parse_mode=ParseMode.MARKDOWN)
 
     except asyncio.CancelledError:
         logger.info(f"Task for user {user_id} was cancelled.")

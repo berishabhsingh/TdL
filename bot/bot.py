@@ -113,7 +113,9 @@ def format_time(seconds):
 
 async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=20):
     """Downloads a file fast by using multiple concurrent connections if the server supports range requests."""
-    async with aiohttp.ClientSession() as session:
+    # Create an explicit TCP connector with a low limit to prevent pooling overhead
+    connector = aiohttp.TCPConnector(limit=max_concurrent)
+    async with aiohttp.ClientSession(connector=connector) as session:
         # Check if the server supports range requests
         async with session.head(url, headers=headers, allow_redirects=True) as resp:
             total_size = int(resp.headers.get("content-length", 0))
@@ -270,11 +272,13 @@ pyrogram.utils.MIN_CHANNEL_ID = -100999999999999
 pyrogram.utils.MIN_CHAT_ID = -9999999999999
 
 # Initialize bot client
+# in_memory=True prevents SQLite DB creation/writes for peer caches which saves some background RAM/IO
 app = Client(
     "terabox_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
+    in_memory=True
 )
 
 @app.on_message(filters.command("start"))

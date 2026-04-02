@@ -113,8 +113,8 @@ def format_time(seconds):
 
 async def fast_download(url, headers, filepath, status_msg, action_text, start_time, last_update_time, max_concurrent=20):
     """Downloads a file fast by using multiple concurrent connections if the server supports range requests."""
-    # Create an explicit TCP connector with a low limit to prevent pooling overhead
-    connector = aiohttp.TCPConnector(limit=max_concurrent)
+    # Create an explicit TCP connector with a low limit and force connections to close to prevent RAM pooling overhead
+    connector = aiohttp.TCPConnector(limit=max_concurrent, force_close=True)
     async with aiohttp.ClientSession(connector=connector) as session:
         # Check if the server supports range requests
         async with session.head(url, headers=headers, allow_redirects=True) as resp:
@@ -151,21 +151,13 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
                                 break
 
                             async with aiofiles.open(part_file, "ab") as f:
-                                buffer = bytearray()
                                 while True:
                                     chunk = await chunk_resp.content.read(1024 * 1024)
                                     if not chunk:
-                                        if buffer:
-                                            await f.write(buffer)
                                         break
-                                    buffer.extend(chunk)
+                                    await f.write(chunk)
                                     downloaded[i] += len(chunk)
                                     current_start += len(chunk)
-
-                                    # Buffer up to 2MB to prevent RAM exhaustion and too many disk writes
-                                    if len(buffer) >= 2 * 1024 * 1024:
-                                        await f.write(buffer)
-                                        buffer.clear()
 
                                     total_downloaded = sum(downloaded)
                                     await progress_bar(total_downloaded, total_size, status_msg, action_text, start_time, last_update_time)
@@ -208,19 +200,12 @@ async def fast_download(url, headers, filepath, status_msg, action_text, start_t
                 total_size = int(resp.headers.get("content-length", 0))
                 downloaded = 0
                 async with aiofiles.open(filepath, "wb") as f:
-                    buffer = bytearray()
                     while True:
                         chunk = await resp.content.read(1024 * 1024)
                         if not chunk:
-                            if buffer:
-                                await f.write(buffer)
                             break
-                        buffer.extend(chunk)
+                        await f.write(chunk)
                         downloaded += len(chunk)
-
-                        if len(buffer) >= 2 * 1024 * 1024:
-                            await f.write(buffer)
-                            buffer.clear()
 
                         if total_size > 0:
                             await progress_bar(downloaded, total_size, status_msg, action_text, start_time, last_update_time)
@@ -272,13 +257,12 @@ pyrogram.utils.MIN_CHANNEL_ID = -100999999999999
 pyrogram.utils.MIN_CHAT_ID = -9999999999999
 
 # Initialize bot client
-# in_memory=True prevents SQLite DB creation/writes for peer caches which saves some background RAM/IO
+# Removed in_memory=True to prevent RAM overuse from Pyrogram's unlimited peer caching
 app = Client(
     "terabox_bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True
+    bot_token=BOT_TOKEN
 )
 
 @app.on_message(filters.command("start"))
@@ -416,6 +400,15 @@ async def log_command(client: Client, message: Message):
     else:
         await message.reply_text("Log file not found.")
 
+@app.on_message(filters.command("clearlog") & filters.user(OWNER_ID) if OWNER_ID else filters.command("clearlog") & filters.user([]))
+async def clearlog_command(client: Client, message: Message):
+    if os.path.exists("bot.log"):
+        with open("bot.log", "w") as f:
+            f.truncate(0)
+        await message.reply_text("Log file cleared.")
+    else:
+        await message.reply_text("Log file not found.")
+
 @app.on_message(filters.command("cancel"))
 async def cancel_command(client: Client, message: Message):
     user_id = message.from_user.id
@@ -537,10 +530,20 @@ async def handle_link(client: Client, message: Message):
             if isinstance(links, dict) and "error" in links:
                 error_msg = links.get('error')
                 await status_msg.edit_text(f"❌ <b>Error:</b> {error_msg}", parse_mode=ParseMode.HTML)
+                await asyncio.sleep(5)
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
                 return
 
             if not links:
                 await status_msg.edit_text("❌ No files found in this link.")
+                await asyncio.sleep(5)
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
                 return
 
             total_download_size = 0
@@ -551,11 +554,16 @@ async def handle_link(client: Client, message: Message):
                 direct_link = (file_info.get("direct_link") or file_info.get("download_link") or file_info.get("link") or "")
                 direct_link = direct_link.strip()
                 if not direct_link:
-                    await message.reply_text(
+                    error_reply = await message.reply_text(
                         f"❌ <b>Could not extract the download link for:</b> {file_info.get('filename', 'Unknown')}\n"
                         "<i>The link may be password-protected, geo-blocked, or the configured cookies have expired.</i>",
                         parse_mode=ParseMode.HTML
                     )
+                    await asyncio.sleep(5)
+                    try:
+                        await error_reply.delete()
+                    except:
+                        pass
                     continue
 
                 # Parse file size to bytes for limit checking
@@ -577,12 +585,17 @@ async def handle_link(client: Client, message: Message):
 
                 size_allowed, reason = await db.check_file_size_limit(user_id, int(size_in_bytes))
                 if not size_allowed:
-                    await message.reply_text(
+                    error_reply = await message.reply_text(
                         f"❌ <b>Limit Exceeded:</b> {file_info.get('filename', 'Unknown')}\n"
                         f"<i>Size ({size_str}) {reason}.</i>\n"
                         "Ask the bot owner to approve you to remove this limit.",
                         parse_mode=ParseMode.HTML
                     )
+                    await asyncio.sleep(5)
+                    try:
+                        await error_reply.delete()
+                    except:
+                        pass
                     continue
 
                 await status_msg.edit_text(f"📥 Downloading: {file_info.get('filename', 'File')}\nSize: {file_info.get('size', 'Unknown')}")
@@ -636,6 +649,11 @@ async def handle_link(client: Client, message: Message):
 
                     if not success:
                         await status_msg.edit_text(f"❌ Failed to download {filename}\nMake sure your API server's cookies are valid.")
+                        await asyncio.sleep(5)
+                        try:
+                            await status_msg.delete()
+                        except:
+                            pass
                         continue
 
                     # Extract zip if necessary
@@ -764,8 +782,12 @@ async def handle_link(client: Client, message: Message):
                 f"⏱ **Time Taken:** {format_time(total_time_taken)}"
             )
 
-            # Delete the status update message and send the stats message to chat
-            await status_msg.delete()
+            # Delete the status update message and send the stats message to user DM/Group
+            try:
+                await status_msg.delete()
+            except:
+                pass
+
             if is_group:
                 await client.send_message(
                     chat_id=message.chat.id,
@@ -773,20 +795,38 @@ async def handle_link(client: Client, message: Message):
                     parse_mode=ParseMode.MARKDOWN
                 )
             else:
-                await message.reply_text(stats_msg, parse_mode=ParseMode.MARKDOWN)
+                await client.send_message(
+                    chat_id=user_id,
+                    text=stats_msg,
+                    parse_mode=ParseMode.MARKDOWN
+                )
 
     except asyncio.CancelledError:
         logger.info(f"Task for user {user_id} was cancelled.")
-        await status_msg.edit_text("🛑 <b>Task Cancelled.</b>", parse_mode=ParseMode.HTML)
+        try:
+            await status_msg.edit_text("🛑 <b>Task Cancelled.</b>", parse_mode=ParseMode.HTML)
+            await asyncio.sleep(3)
+            await status_msg.delete()
+        except:
+            pass
     except FloodWait as e:
         logger.warning(f"FloodWait encountered: sleeping for {e.value} seconds.")
-        await status_msg.edit_text(f"⏳ Rate limited by Telegram. Waiting for {e.value} seconds...")
-        await asyncio.sleep(e.value)
-        await status_msg.edit_text("🔄 Retrying...")
-        # Ideally retry logic should be implemented, but sleeping is a start
+        try:
+            await status_msg.edit_text(f"⏳ Rate limited by Telegram. Waiting for {e.value} seconds...")
+            await asyncio.sleep(e.value)
+            await status_msg.edit_text("🔄 Please try again later.")
+            await asyncio.sleep(3)
+            await status_msg.delete()
+        except:
+            pass
     except Exception as e:
         logger.error(f"Error processing {url}: {e}", exc_info=True)
-        await status_msg.edit_text(f"❌ An unexpected error occurred.")
+        try:
+            await status_msg.edit_text(f"❌ An unexpected error occurred.")
+            await asyncio.sleep(5)
+            await status_msg.delete()
+        except:
+            pass
     finally:
         if current_task in user_tasks[user_id]:
             user_tasks[user_id].remove(current_task)
